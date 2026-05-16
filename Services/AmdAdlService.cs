@@ -15,10 +15,11 @@ namespace Kil0bitSystemMonitor.Services
         private const int ADL_MAX_PATH = 256;
         private const int ADL_PMLOG_MAX_SENSORS = 256;
 
-        // Sensor indices from ADLSensorType enum (adl_structures.h)
+        // Sensor indices from ADLSensorType enum (ext_ADL.h)
         private const int ADL_SENSOR_TEMPERATURE_EDGE    = 8;  // GPU core/edge temp
-        private const int ADL_SENSOR_TEMPERATURE_HOTSPOT = 15; // hotspot (not always present on APU)
-        private const int ADL_SENSOR_TEMPERATURE_GFX     = 57; // GFX die temp (Navi+, Cezanne APU)
+        private const int ADL_SENSOR_TEMPERATURE_HOTSPOT = 27; // GPU hotspot
+        private const int ADL_SENSOR_TEMPERATURE_GFX     = 28; // GFX die temp
+        private const int ADL_SENSOR_GFX_ACTIVITY = 19; // GPU engine usage %
 
         // --- ADL structs ---
         [StructLayout(LayoutKind.Sequential)]
@@ -108,8 +109,11 @@ namespace Kil0bitSystemMonitor.Services
 
         public bool IsAvailable => _initialized && _adapterIndex >= 0 && _queryPmLog != null;
 
-        public AmdAdlService()
+        private readonly string _selectedName;
+
+        public AmdAdlService(string selectedGpuName)
         {
+            _selectedName = selectedGpuName;
             TryInitialize();
         }
 
@@ -148,16 +152,17 @@ namespace Kil0bitSystemMonitor.Services
                     int infoResult = getInfo(_adlContext, pInfo, structSize * numAdapters);
                     if (infoResult != ADL_OK) return;
 
-
                     for (int i = 0; i < numAdapters; i++)
                     {
                         var info = Marshal.PtrToStructure<ADLAdapterInfo>(pInfo + i * structSize);
-                        // AMD vendor ID is 0x1002 (4098) or may appear as 1002 decimal due to struct misalign
-                        if (info.Present == 1 && (info.VendorID == 0x1002 || info.VendorID == 1002))
-                        {
-                            _adapterIndex = info.AdapterIndex;
-                            break;
-                        }
+                        if (info.Present != 1 || (info.VendorID != 0x1002 && info.VendorID != 1002)) continue;
+
+                        // match by name if specified, else take first AMD adapter
+                        bool nameMatch = string.IsNullOrEmpty(_selectedName) ||
+                                        info.AdapterName.Contains(_selectedName, StringComparison.OrdinalIgnoreCase) ||
+                                        _selectedName.Contains(info.AdapterName, StringComparison.OrdinalIgnoreCase);
+
+                        if (nameMatch) { _adapterIndex = info.AdapterIndex; break; }
                     }
                 }
                 finally
@@ -201,6 +206,31 @@ namespace Kil0bitSystemMonitor.Services
                 {
                     float edge = data.Sensors[ADL_SENSOR_TEMPERATURE_EDGE].Value;
                     if (edge > 0 && edge < 120) return edge;
+                }
+
+                return -1;
+            }
+            catch { return -1; }
+        }
+
+        public float GetGpuUsage()
+        {
+            if (!IsAvailable) return -1;
+            try
+            {
+                var data = new ADLPMLogDataOutput
+                {
+                    Size = Marshal.SizeOf(typeof(ADLPMLogDataOutput)),
+                    Sensors = new ADLSingleSensorData[ADL_PMLOG_MAX_SENSORS]
+                };
+
+                if (_queryPmLog!(_adlContext, _adapterIndex, ref data) != ADL_OK) return -1;
+
+                if (ADL_SENSOR_GFX_ACTIVITY < data.Sensors.Length &&
+                    data.Sensors[ADL_SENSOR_GFX_ACTIVITY].Supported == 1)
+                {
+                    float usage = data.Sensors[ADL_SENSOR_GFX_ACTIVITY].Value;
+                    if (usage >= 0 && usage <= 100) return usage;
                 }
 
                 return -1;

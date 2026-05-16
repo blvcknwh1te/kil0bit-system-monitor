@@ -263,17 +263,12 @@ namespace Kil0bitSystemMonitor.Services
 
                         // NVIDIA and Arc are discrete; AMD/Radeon/Intel UHD/Iris may be APU (zero dedicated VRAM)
                         bool isDedicatedSelection = _isNvidiaSelected ||
-                            selectedName.Contains("Arc", StringComparison.OrdinalIgnoreCase);
-                        bool isAmdApu = (selectedName.Contains("AMD", StringComparison.OrdinalIgnoreCase) ||
-                                        selectedName.Contains("Radeon", StringComparison.OrdinalIgnoreCase) ||
-                                        selectedName.Contains("Intel", StringComparison.OrdinalIgnoreCase) ||
-                                        selectedName.Contains("UHD", StringComparison.OrdinalIgnoreCase) ||
-                                        selectedName.Contains("Iris", StringComparison.OrdinalIgnoreCase)) &&
-                                        dedicatedLuidCandidate == null;
-
-                        _selectedGpuLuid = (isDedicatedSelection && !isAmdApu)
-                            ? dedicatedLuidCandidate
-                            : (sharedLuidCandidate ?? dedicatedLuidCandidate);
+                                                    selectedName.Contains("Arc", StringComparison.OrdinalIgnoreCase) ||
+                                                    (selectedName.Contains("AMD", StringComparison.OrdinalIgnoreCase) ||
+                                                    selectedName.Contains("Radeon", StringComparison.OrdinalIgnoreCase)) &&
+                                                    dedicatedLuidCandidate != null;
+                                                    
+                        _selectedGpuLuid = isDedicatedSelection ? dedicatedLuidCandidate : (sharedLuidCandidate ?? dedicatedLuidCandidate);
                     }
                     catch { }
                 }
@@ -283,7 +278,7 @@ namespace Kil0bitSystemMonitor.Services
                 
                 StartSmiReader();
                 _adlService?.Dispose();
-                _adlService = new AmdAdlService();
+                _adlService = new AmdAdlService(selectedName);
             }
             catch { }
         }
@@ -330,8 +325,10 @@ namespace Kil0bitSystemMonitor.Services
         {
             try
             {
+                bool isEmpty = _gpuCounters.Count == 0;
+                bool throttleExpired = (DateTime.Now - _lastGpuCounterRefresh).TotalSeconds >= 30;
                 // Throttle enumeration to once every 30 seconds to save CPU
-                if ((DateTime.Now - _lastGpuCounterRefresh).TotalSeconds < 30 && _gpuCounters.Count > 0) return;
+                if (!throttleExpired && !isEmpty) return;
                 _lastGpuCounterRefresh = DateTime.Now;
 
                 var category = new PerformanceCounterCategory("GPU Engine");
@@ -448,12 +445,24 @@ namespace Kil0bitSystemMonitor.Services
                 gpuUsage = GetNvidiaUsage();
             }
             
-            if (gpuUsage == 0) // Fallback or non-nvidia
+            if (gpuUsage == 0)
             {
-                UpdateGpuCounters();
-                foreach (var counter in _gpuCounters.Values)
+                if (_adlService != null && _adlService.IsAvailable) // AMD method
                 {
-                    try { gpuUsage += counter.NextValue(); } catch { }
+                    float adlUsage = _adlService.GetGpuUsage();
+                    if (adlUsage >= 0) gpuUsage = adlUsage;
+                }
+                else
+                {
+                    UpdateGpuCounters(); // fallback PerfomanceCounter
+                    var deadCounters = new System.Collections.Generic.List<string>();
+                    foreach (var kvp in _gpuCounters)
+                    {
+                        try { gpuUsage += kvp.Value.NextValue(); }
+                        catch { deadCounters.Add(kvp.Key); }
+                    }
+                    foreach (var k in deadCounters) { _gpuCounters[k].Dispose(); _gpuCounters.Remove(k); }
+                    gpuUsage = Math.Min(gpuUsage, 100f);
                 }
             }
             metrics.GpuUsage = gpuUsage;
