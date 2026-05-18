@@ -143,9 +143,16 @@ namespace Kil0bitSystemMonitor
                 int disableTransitions = 1;
                 Win32Helper.DwmSetWindowAttribute(_hWnd, 3, ref disableTransitions, sizeof(int));
 
-                AttachToTaskbar();
+                // Snapping setup (Only attach parent handle if snapping is enabled at launch)
+                if (_config.Config.StickToTaskbar)
+                {
+                    AttachToTaskbar();
+                }
+                else
+                {
+                    AlignToTaskbarCenter();
+                }
                 ShowWindow(_hWnd, 5);
-                AlignToTaskbarCenter();
                 UpdateCachedColors();
                 UpdateLayer();
 
@@ -167,6 +174,21 @@ namespace Kil0bitSystemMonitor
                         {
                             ClearCaches();
                             UpdateCachedColors();
+                        }
+                        if (e.PropertyName == nameof(_config.Config.StickToTaskbar))
+                        {
+                            // Snapping toggle handled dynamically to clear/restore HWND parent
+                            if (_config.Config.StickToTaskbar)
+                            {
+                                AttachToTaskbar();
+                            }
+                            else
+                            {
+                                // Remove taskbar owner so it floats freely
+                                Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, IntPtr.Zero);
+                                UnregisterAppBar();
+                                AlignToTaskbarCenter();
+                            }
                         }
                         if (e.PropertyName == nameof(_config.Config.ShowOverlay) || e.PropertyName == nameof(_config.Config.HideOnFullscreen) || e.PropertyName == nameof(_config.Config.StickToTaskbar) || e.PropertyName == nameof(_config.Config.ShowPods) || e.PropertyName == nameof(_config.Config.ShowBackground) || e.PropertyName == nameof(_config.Config.AlwaysOnTop))
                         {
@@ -197,22 +219,33 @@ namespace Kil0bitSystemMonitor
                 }
                 else
                 {
-                    // Debounce hide by 300ms to prevent flickering during shell animations
+                    // Debounce hide by 800ms to prevent flickering during shell animations
                     if (_hideDebounceTimer == null)
                     {
-                        _hideDebounceTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+                        _hideDebounceTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
                         _hideDebounceTimer.Tick += (s, e) => { _hideDebounceTimer.Stop(); if (!ShouldShowOverlay()) { _targetAlpha = 0; StartFade(); } };
                     }
                     if (!_hideDebounceTimer.IsEnabled && _targetAlpha != 0) _hideDebounceTimer.Start();
                 }
 
+                // Enforce TOPMOST Z-order only if the taskbar is not the foreground active window.
+                // Re-asserting TOPMOST while the taskbar is active and managing its Z-order causes blinking.
+                // However, we must enforce it when other windows (like Task View) are active to keep the overlay visible.
                 if (_overlayVisible && _config.Config.AlwaysOnTop)
                 {
-                    // Smart check: Only re-assert TOPMOST if we are NOT already the top-most window.
-                    IntPtr prev = GetWindow(_hWnd, GW_HWNDPREV);
-                    if (prev != IntPtr.Zero)
+                    IntPtr fg = GetForegroundWindow();
+                    StringBuilder sb = new StringBuilder(256);
+                    Win32Helper.GetClassName(fg, sb, sb.Capacity);
+                    string fgClass = sb.ToString();
+
+                    if (fgClass != "Shell_TrayWnd" && fgClass != "Shell_SecondaryTrayWnd")
                     {
-                        SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0, Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0040);
+                        // Smart check: Only re-assert TOPMOST if we are NOT already the top-most window.
+                        IntPtr prev = GetWindow(_hWnd, GW_HWNDPREV);
+                        if (prev != IntPtr.Zero)
+                        {
+                            SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0, Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0040);
+                        }
                     }
                 }
             });
@@ -337,9 +370,12 @@ namespace Kil0bitSystemMonitor
             StringBuilder sb = new StringBuilder(256);
             Win32Helper.GetClassName(hWnd, sb, sb.Capacity);
             string cls = sb.ToString();
+
+            // Core Windows Shell and UWP overlay window classes
             if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd" ||
-                   cls == "MultitaskingViewFrame" || cls == "TaskView" || cls == "Windows.UI.Core.CoreWindow" ||
-                   cls == "XamlExplorerViewHostWindow" || cls == "DesktopWindowXamlSource")
+                cls == "MultitaskingViewFrame" || cls == "TaskView" || cls == "Windows.UI.Core.CoreWindow" ||
+                cls == "XamlExplorerViewHostWindow" || cls == "DesktopWindowXamlSource" ||
+                cls == "Windows.UI.Input.InputSite.WindowClass" || cls == "PopupHost")
                 return true;
 
             try
@@ -347,11 +383,36 @@ namespace Kil0bitSystemMonitor
                 GetWindowThreadProcessId(hWnd, out uint pid);
                 if (pid != 0)
                 {
-                    using (var p = System.Diagnostics.Process.GetProcessById((int)pid))
+                    IntPtr hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+                    if (hProcess != IntPtr.Zero)
                     {
-                        string pname = p.ProcessName.ToLower();
-                        return (pname == "explorer" || pname == "shellexperiencehost" ||
-                                pname == "startmenuexperiencehost" || pname == "searchhost");
+                        try
+                        {
+                            uint size = 1024;
+                            StringBuilder buffer = new StringBuilder((int)size);
+                            if (QueryFullProcessImageName(hProcess, 0, buffer, ref size))
+                            {
+                                string fullPath = buffer.ToString();
+                                string pname = System.IO.Path.GetFileNameWithoutExtension(fullPath).ToLowerInvariant();
+                                return (pname == "explorer" || pname == "shellexperiencehost" ||
+                                        pname == "startmenuexperiencehost" || pname == "searchhost" ||
+                                        pname == "dwm");
+                            }
+                        }
+                        finally
+                        {
+                            CloseHandle(hProcess);
+                        }
+                    }
+                    else
+                    {
+                        // OpenProcess failed (Access Denied / protected process).
+                        // Highly protected UWP/system processes (like StartMenuExperienceHost or SYSTEM processes)
+                        // are definitely shell/system windows, not standard user apps or games.
+                        if (Marshal.GetLastWin32Error() == 5) // ERROR_ACCESS_DENIED
+                        {
+                            return true;
+                        }
                     }
                 }
             }
@@ -719,5 +780,9 @@ namespace Kil0bitSystemMonitor
         [DllImport("user32.dll", SetLastError = true)] private static extern bool DestroyIcon(IntPtr h);
         [StructLayout(LayoutKind.Sequential)] struct APPBARDATA { public int cbSize; public IntPtr hWnd; public uint uCallbackMessage; public uint uEdge; public Win32Helper.RECT rc; public IntPtr lParam; }
         [DllImport("shell32.dll", CallingConvention = CallingConvention.StdCall)] static extern IntPtr SHAppBarMessage(uint m, ref APPBARDATA d);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool CloseHandle(IntPtr hObject);
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool QueryFullProcessImageName(IntPtr hProcess, uint dwFlags, StringBuilder lpExeName, ref uint lpdwSize);
+        private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
     }
 }
