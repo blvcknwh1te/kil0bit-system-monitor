@@ -343,8 +343,13 @@ namespace Kil0bitSystemMonitor
                 // fire ABN_FULLSCREENAPP (most modern titles, browser F11, video players, etc.)
                 if (fg != IntPtr.Zero && fg != _hWnd)
                 {
+                    // Maximized windows on no-taskbar displays cover the full monitor rect; require borderless to qualify as fullscreen.
+                    const long WS_CAPTION = 0x00C00000L;
+                    long style = Win32Helper.GetWindowLong(fg, Win32Helper.GWL_STYLE);
+                    bool hasCaption = (style & WS_CAPTION) != 0;
+
                     // Check if foreground window covers the whole monitor
-                    if (Win32Helper.GetWindowRect(fg, out Win32Helper.RECT fgRect))
+                    if (!hasCaption && Win32Helper.GetWindowRect(fg, out Win32Helper.RECT fgRect))
                     {
                         IntPtr hMon = MonitorFromWindow(fg, 1); // MONITOR_DEFAULTTONEAREST
                         MONITORINFO mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf(typeof(MONITORINFO)) };
