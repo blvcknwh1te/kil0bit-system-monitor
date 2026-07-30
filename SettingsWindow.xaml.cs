@@ -52,11 +52,65 @@ namespace Kil0bitSystemMonitor
                 
                 // Load heavy hardware lists in background to keep UI snappy
                 LoadHardwareDataAsync();
+
+                LocalizationService.Instance.LanguageChanged += OnLanguageChanged;
+                Closed += (_, _) => LocalizationService.Instance.LanguageChanged -= OnLanguageChanged;
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"SettingsWindow Init Error: {ex.Message}");
             }
+        }
+
+        private void OnLanguageChanged()
+        {
+            Dispatcher.BeginInvoke(ApplyLanguage);
+        }
+
+        private void ApplyLanguage()
+        {
+            try
+            {
+                SettingsLocalization.Apply(this, SettingsNav);
+                SyncComboSelections();
+            }
+            catch { }
+        }
+
+        private void SyncComboSelections()
+        {
+            SelectComboByTag(ProcessSortCombo, _config.Config.ProcessListSortColumn);
+            SelectComboByTag(OverlayClickModeCombo, _config.Config.OverlayClickMode);
+            SelectComboByTag(LanguageCombo, _config.Config.Language);
+            SelectComboByTag(DebugLogRetentionCombo, _config.Config.DebugLogRetention);
+        }
+
+        private static void SelectComboByTag(System.Windows.Controls.ComboBox? combo, string? tag)
+        {
+            if (combo == null || string.IsNullOrEmpty(tag)) return;
+            foreach (var obj in combo.Items)
+            {
+                if (obj is System.Windows.Controls.ComboBoxItem item &&
+                    string.Equals(item.Tag as string, tag, StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedItem = item;
+                    return;
+                }
+            }
+        }
+
+        private void ProcessSortCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (!IsLoaded) return;
+            if (ProcessSortCombo.SelectedItem is System.Windows.Controls.ComboBoxItem item && item.Tag is string tag)
+                _config.Config.ProcessListSortColumn = tag;
+        }
+
+        private void LanguageCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            // Binding обновит Config.Language; Apply сработает через LanguageChanged
+            if (!IsLoaded) return;
+            Dispatcher.BeginInvoke(ApplyLanguage, System.Windows.Threading.DispatcherPriority.Background);
         }
 
         private async void LoadHardwareDataAsync()
@@ -83,10 +137,14 @@ namespace Kil0bitSystemMonitor
             try
             {
                 NetAdapterCombo.Items.Clear();
-                NetAdapterCombo.Items.Add(new ComboBoxItem { Content = "Default" });
+                NetAdapterCombo.Items.Add(new ComboBoxItem
+                {
+                    Content = LocalizationService.Instance["Settings.Monitoring.Default"],
+                    Tag = "Default"
+                });
                 foreach (var adapter in adapters)
                 {
-                    NetAdapterCombo.Items.Add(new ComboBoxItem { Content = adapter });
+                    NetAdapterCombo.Items.Add(new ComboBoxItem { Content = adapter, Tag = adapter });
                 }
             }
             catch { }
@@ -97,10 +155,14 @@ namespace Kil0bitSystemMonitor
             try
             {
                 GpuAdapterCombo.Items.Clear();
-                GpuAdapterCombo.Items.Add(new ComboBoxItem { Content = "Default" });
+                GpuAdapterCombo.Items.Add(new ComboBoxItem
+                {
+                    Content = LocalizationService.Instance["Settings.Monitoring.Default"],
+                    Tag = "Default"
+                });
                 foreach (var gpu in gpus)
                 {
-                    GpuAdapterCombo.Items.Add(new ComboBoxItem { Content = gpu });
+                    GpuAdapterCombo.Items.Add(new ComboBoxItem { Content = gpu, Tag = gpu });
                 }
             }
             catch { }
@@ -177,6 +239,8 @@ namespace Kil0bitSystemMonitor
                 // Force Immersive Dark Mode for the title bar system buttons
                 int darkMode = 1;
                 Win32Helper.DwmSetWindowAttribute(hWnd, Win32Helper.DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+
+                ApplyLanguage();
             }
             catch { }
         }
@@ -284,10 +348,10 @@ namespace Kil0bitSystemMonitor
         {
             ContentDialog resetDialog = new ContentDialog
             {
-                Title = "Factory Reset",
-                Content = "Are you sure you want to reset all settings to factory defaults?\n\nThis will revert all monitoring, general, and appearance preferences to their original states. This action cannot be undone.",
-                PrimaryButtonText = "Reset All",
-                CloseButtonText = "Cancel",
+                Title = LocalizationService.Instance["Settings.Dialog.ResetTitle"],
+                Content = LocalizationService.Instance["Settings.Dialog.ResetBody"],
+                PrimaryButtonText = LocalizationService.Instance["Settings.Dialog.ResetPrimary"],
+                CloseButtonText = LocalizationService.Instance["Settings.Dialog.ResetClose"],
                 DefaultButton = ContentDialogButton.Close
             };
 
@@ -332,6 +396,13 @@ namespace Kil0bitSystemMonitor
             c.ShowBackground = false;
             c.NetLabelColorHex = null; c.CpuRamLabelColorHex = null; c.GpuLabelColorHex = null; c.DiskLabelColorHex = null;
             c.NetAccentColorHex = null; c.CpuRamAccentColorHex = null; c.GpuAccentColorHex = null; c.DiskAccentColorHex = null;
+            c.ProcessListSortColumn = "Name";
+            c.ProcessListSortAscending = true;
+            c.Language = "en";
+            c.OverlayClickMode = "ProcessList";
+            c.ProcessListShowIcons = true;
+            c.DebugLogEnabled = false;
+            c.DebugLogRetention = "Week";
             
             StartupService.SetStartup(false);
             _config.SaveConfig();

@@ -33,6 +33,16 @@ namespace Kil0bitSystemMonitor
         private uint _currentDpi = 96;
         private float _dpiScale = 1.0f;
 
+        // Click vs drag
+        private bool _lButtonDown = false;
+        private bool _lButtonDragged = false;
+        private int _lButtonDownScreenX;
+        private int _lButtonDownScreenY;
+        private long _lastDragEndTick;
+        private const int DragThresholdPx = 8;
+        private const int PostDragClickGuardMs = 120;
+        private ProcessListWindow? _processListWindow;
+
         // Visibility / fade state
         private byte _currentAlpha = 255;
         private byte _targetAlpha = 255;
@@ -69,10 +79,12 @@ namespace Kil0bitSystemMonitor
         private const int WM_RBUTTONUP = 0x0205;
         private const int HTCAPTION = 2;
         private const int WM_LBUTTONDOWN = 0x0201;
+        private const int WM_LBUTTONUP = 0x0202;
         private const int WM_LBUTTONDBLCLK = 0x0203;
         private const int WM_NCLBUTTONDOWN = 0x00A1;
         private const int WM_MOUSEMOVE = 0x0200;
         private const int WM_MOUSELEAVE = 0x02A3;
+        private const int WM_CAPTURECHANGED = 0x0215;
         private const int WM_WINDOWPOSCHANGING = 0x0046;
         private const int WM_WINDOWPOSCHANGED = 0x0047;
         private const int WM_EXITSIZEMOVE = 0x0232;
@@ -155,6 +167,7 @@ namespace Kil0bitSystemMonitor
                 ShowWindow(_hWnd, 5);
                 UpdateCachedColors();
                 UpdateLayer();
+                RegisterShellHook();
 
                 _onMetricsUpdated = (m) => {
                     _dispatcher.BeginInvoke(() => {
@@ -251,17 +264,6 @@ namespace Kil0bitSystemMonitor
             });
         }
 
-        private void AttachToTaskbar()
-        {
-            IntPtr taskbarHwnd = Win32Helper.FindWindow("Shell_TrayWnd", null!);
-            if (taskbarHwnd != IntPtr.Zero)
-            {
-                Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, taskbarHwnd);
-                RegisterAppBar();
-                AlignToTaskbarCenter();
-            }
-        }
-
         private void RegisterAppBar() { if (_appbarRegistered || _hWnd == IntPtr.Zero) return; APPBARDATA abd = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = _hWnd, uCallbackMessage = WM_APPBAR_CALLBACK }; SHAppBarMessage(ABM_NEW, ref abd); _appbarRegistered = true; }
         private void UnregisterAppBar() { if (!_appbarRegistered || _hWnd == IntPtr.Zero) return; APPBARDATA abd = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = _hWnd }; SHAppBarMessage(ABM_REMOVE, ref abd); _appbarRegistered = false; }
         private void UpdateVisibility()
@@ -328,30 +330,36 @@ namespace Kil0bitSystemMonitor
             if (_config.Config.HideOnFullscreen)
             {
                 IntPtr fg = GetForegroundWindow();
-                // Priority: If we are in the shell (Task View, Desktop), always show
                 if (IsShellWindow(fg)) return true;
 
-                // ABN_FULLSCREENAPP fired — shell says a fullscreen app is covering the taskbar
+                // Наш popup процессов не должен прятать оверлей
+                if (_processListWindow != null && _processListWindow.IsVisible)
+                    return true;
+
                 if (_shellFullscreen) return false;
 
-                // Taskbar rect collapsed = autohide triggered by a fullscreen/exclusive app
                 IntPtr taskbarHwnd = Win32Helper.FindWindow("Shell_TrayWnd", null!);
                 if (taskbarHwnd != IntPtr.Zero && Win32Helper.GetWindowRect(taskbarHwnd, out Win32Helper.RECT tbRect))
-                    if ((tbRect.Bottom - tbRect.Top) <= 4 || (tbRect.Right - tbRect.Left) <= 4) return false;
+                {
+                    int tw = tbRect.Right - tbRect.Left;
+                    int th = tbRect.Bottom - tbRect.Top;
+                    // Игнор мигающих нулевых размеров при анимациях shell
+                    if ((th <= 4 || tw <= 4) && tw + th > 0)
+                        return false;
+                }
 
-                // Fallback: check foreground window — catches windowed-fullscreen games that never
-                // fire ABN_FULLSCREENAPP (most modern titles, browser F11, video players, etc.)
                 if (fg != IntPtr.Zero && fg != _hWnd)
                 {
-                    // Maximized windows on no-taskbar displays cover the full monitor rect; require borderless to qualify as fullscreen.
                     const long WS_CAPTION = 0x00C00000L;
+                    const long WS_THICKFRAME = 0x00040000L;
                     long style = Win32Helper.GetWindowLong(fg, Win32Helper.GWL_STYLE);
                     bool hasCaption = (style & WS_CAPTION) != 0;
+                    bool hasFrame = (style & WS_THICKFRAME) != 0;
 
-                    // Check if foreground window covers the whole monitor
-                    if (!hasCaption && Win32Helper.GetWindowRect(fg, out Win32Helper.RECT fgRect))
+                    // Только реально безрамочные fullscreen-кандидаты (не обычные окна IDE/браузера)
+                    if (!hasCaption && !hasFrame && Win32Helper.GetWindowRect(fg, out Win32Helper.RECT fgRect))
                     {
-                        IntPtr hMon = MonitorFromWindow(fg, 1); // MONITOR_DEFAULTTONEAREST
+                        IntPtr hMon = MonitorFromWindow(fg, 1);
                         MONITORINFO mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf(typeof(MONITORINFO)) };
                         if (GetMonitorInfo(hMon, ref mi))
                         {
@@ -425,17 +433,446 @@ namespace Kil0bitSystemMonitor
             return false;
         }
 
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<nint, (int IconRight, int TrayLeft)> _taskbarBounds = new();
+        private IntPtr _attachedTaskbar = IntPtr.Zero;
+        private int _taskbarBoundsRefreshGen;
+        private bool _shellHookRegistered;
+        private uint _wmShellHook;
+
+        private const int HSHELL_WINDOWCREATED = 1;
+        private const int HSHELL_WINDOWDESTROYED = 2;
+        private const int HSHELL_REDRAW = 6;
+        private const int HSHELL_WINDOWREPLACED = 13;
+        private const int HSHELL_WINDOWREPLACING = 14;
+        private const uint MONITOR_DEFAULTTONULL = 0;
+        private const uint MONITOR_DEFAULTTONEAREST = 2;
+
         private void AlignToTaskbarCenter()
         {
-            if (!_config.Config.StickToTaskbar) { SetWindowPos(_hWnd, IntPtr.Zero, (int)_config.Config.X, (int)_config.Config.Y, 0, 0, 0x0001 | 0x0004 | 0x0010); return; }
-            IntPtr taskbar = Win32Helper.FindWindow("Shell_TrayWnd", null!);
-            if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
+            if (!_config.Config.StickToTaskbar)
             {
-                int h = tb.Bottom - tb.Top;
-                int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
-                int cy = tb.Top + (h - oh) / 2;
-                SetWindowPos(_hWnd, IntPtr.Zero, (int)_config.Config.X, cy, 0, 0, 0x0001 | 0x0004 | 0x0010);
-                _config.Config.Y = cy;
+                SetWindowPos(_hWnd, IntPtr.Zero, (int)_config.Config.X, (int)_config.Config.Y, 0, 0, 0x0001 | 0x0004 | 0x0010);
+                return;
+            }
+
+            int refX = (int)_config.Config.X;
+            int refY = (int)_config.Config.Y;
+            int overlayW = 200;
+            if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur))
+            {
+                refX = cur.Left + cur.Width / 2;
+                refY = cur.Top + cur.Height / 2;
+                if (cur.Width > 0) overlayW = cur.Width;
+            }
+
+            IntPtr taskbar = ResolveTaskbarForPoint(refX, refY);
+            if (taskbar == IntPtr.Zero || !Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
+                return;
+
+            EnsureAttachedToTaskbar(taskbar);
+            int h = tb.Bottom - tb.Top;
+            int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
+            int cy = tb.Top + (h - oh) / 2;
+            int x = (int)_config.Config.X;
+            if (TryGetTaskbarDragRange(taskbar, tb, overlayW, out int minX, out int maxX))
+                x = Math.Max(minX, Math.Min(maxX, x));
+            SetWindowPos(_hWnd, IntPtr.Zero, x, cy, 0, 0, 0x0001 | 0x0004 | 0x0010);
+            _config.Config.X = x;
+            _config.Config.Y = cy;
+        }
+
+        private void AttachToTaskbar()
+        {
+            int refX = (int)_config.Config.X;
+            int refY = (int)_config.Config.Y;
+            if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur))
+            {
+                refX = cur.Left + cur.Width / 2;
+                refY = cur.Top + cur.Height / 2;
+            }
+
+            IntPtr taskbarHwnd = ResolveTaskbarForPoint(refX, refY);
+            if (taskbarHwnd == IntPtr.Zero)
+                taskbarHwnd = Win32Helper.FindWindow("Shell_TrayWnd", null!);
+
+            if (taskbarHwnd != IntPtr.Zero)
+            {
+                EnsureAttachedToTaskbar(taskbarHwnd);
+                RegisterAppBar();
+                ScheduleTaskbarBoundsRefresh();
+                AlignToTaskbarCenter();
+            }
+        }
+
+        private void EnsureAttachedToTaskbar(IntPtr taskbar)
+        {
+            if (taskbar == IntPtr.Zero || taskbar == _attachedTaskbar) return;
+            Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, taskbar);
+            _attachedTaskbar = taskbar;
+        }
+
+        /// <summary>
+        /// Таскбар монитора под точкой (primary Shell_TrayWnd или Shell_SecondaryTrayWnd).
+        /// </summary>
+        private IntPtr ResolveTaskbarForPoint(int x, int y)
+        {
+            var pt = new POINT { x = x, y = y };
+            IntPtr hMon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+            return FindTaskbarForMonitor(hMon);
+        }
+
+        private IntPtr FindTaskbarForMonitor(IntPtr hMon)
+        {
+            IntPtr primary = Win32Helper.FindWindow("Shell_TrayWnd", null!);
+            if (hMon == IntPtr.Zero)
+                return primary;
+
+            if (primary != IntPtr.Zero && MonitorFromWindow(primary, MONITOR_DEFAULTTONULL) == hMon)
+                return primary;
+
+            IntPtr found = IntPtr.Zero;
+            EnumWindows((hwnd, _) =>
+            {
+                var cls = new StringBuilder(64);
+                Win32Helper.GetClassName(hwnd, cls, cls.Capacity);
+                if (!string.Equals(cls.ToString(), "Shell_SecondaryTrayWnd", StringComparison.Ordinal))
+                    return true;
+                if (MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) == hMon)
+                {
+                    found = hwnd;
+                    return false;
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            return found != IntPtr.Zero ? found : primary;
+        }
+
+        private System.Collections.Generic.List<IntPtr> EnumerateTaskbars()
+        {
+            var list = new System.Collections.Generic.List<IntPtr>();
+            IntPtr primary = Win32Helper.FindWindow("Shell_TrayWnd", null!);
+            if (primary != IntPtr.Zero) list.Add(primary);
+
+            EnumWindows((hwnd, _) =>
+            {
+                var cls = new StringBuilder(64);
+                Win32Helper.GetClassName(hwnd, cls, cls.Capacity);
+                if (string.Equals(cls.ToString(), "Shell_SecondaryTrayWnd", StringComparison.Ordinal))
+                    list.Add(hwnd);
+                return true;
+            }, IntPtr.Zero);
+
+            return list;
+        }
+
+        private void RegisterShellHook()
+        {
+            try
+            {
+                _wmShellHook = RegisterWindowMessage("SHELLHOOK");
+                if (_wmShellHook != 0 && RegisterShellHookWindow(_hWnd))
+                    _shellHookRegistered = true;
+            }
+            catch { }
+            RefreshTaskbarBounds();
+        }
+
+        private void UnregisterShellHook()
+        {
+            if (!_shellHookRegistered || _hWnd == IntPtr.Zero) return;
+            try { DeregisterShellHookWindow(_hWnd); } catch { }
+            _shellHookRegistered = false;
+        }
+
+        private void OnShellHook(IntPtr wParam)
+        {
+            int code = unchecked((int)(wParam.ToInt64() & 0x7FFF));
+            if (code is HSHELL_WINDOWCREATED or HSHELL_WINDOWDESTROYED or HSHELL_REDRAW
+                or HSHELL_WINDOWREPLACED or HSHELL_WINDOWREPLACING)
+                ScheduleTaskbarBoundsRefresh();
+        }
+
+        private void ScheduleTaskbarBoundsRefresh()
+        {
+            int gen = System.Threading.Interlocked.Increment(ref _taskbarBoundsRefreshGen);
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                System.Threading.Thread.Sleep(120);
+                if (gen != _taskbarBoundsRefreshGen) return;
+                RefreshTaskbarBounds();
+            });
+        }
+
+        private void RefreshTaskbarBounds()
+        {
+            try
+            {
+                foreach (var taskbar in EnumerateTaskbars())
+                    RefreshOneTaskbarBounds(taskbar);
+            }
+            catch { }
+        }
+
+        private void RefreshOneTaskbarBounds(IntPtr taskbar)
+        {
+            if (taskbar == IntPtr.Zero || !Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
+                return;
+
+            int trayLeft = ResolveTrayLeft(taskbar, tb);
+
+            int iconRight;
+            int? lastIcon = TryGetLastTaskIconRight(taskbar, tb, trayLeft);
+            if (lastIcon.HasValue)
+                iconRight = lastIcon.Value;
+            else
+            {
+                int startRight = TryGetStartButtonRight(taskbar, tb);
+                iconRight = startRight > tb.Left
+                    ? startRight
+                    : tb.Left + (int)(48 * _dpiScale);
+            }
+
+            _taskbarBounds[(nint)taskbar] = (iconRight, trayLeft);
+
+            if (DebugLogger.IsEnabled)
+                DebugLogger.Info("Taskbar.Bounds", $"hwnd=0x{taskbar.ToInt64():X} iconRight={iconRight} trayLeft={trayLeft}");
+        }
+
+        private int ResolveTrayLeft(IntPtr taskbar, Win32Helper.RECT tb)
+        {
+            string[] trayClasses =
+            {
+                "TrayNotifyWnd",
+                "ClockFlyoutTrayBridgeWindow",
+                "TrayClockWClass",
+                "SystemTray.8HostWindow",
+                "TrayShowDesktopButtonWClass"
+            };
+
+            foreach (var cls in trayClasses)
+            {
+                IntPtr h = FindDescendantByClass(taskbar, cls);
+                if (h != IntPtr.Zero && Win32Helper.GetWindowRect(h, out Win32Helper.RECT rc) && rc.Width > 2)
+                    return rc.Left;
+            }
+
+            int tbH = Math.Max(1, tb.Bottom - tb.Top);
+            int threshold = tb.Left + (int)((tb.Right - tb.Left) * 0.5);
+            int best = tb.Right;
+            EnumChildWindows(taskbar, (hwnd, _) =>
+            {
+                var name = new StringBuilder(64);
+                Win32Helper.GetClassName(hwnd, name, name.Capacity);
+                string cls = name.ToString();
+                if (cls is "MSTaskListWClass" or "MSTaskSwWClass" or "ReBarWindow32" or "WorkerW")
+                    return true;
+                if (!Win32Helper.GetWindowRect(hwnd, out Win32Helper.RECT rc) || rc.Width < 4)
+                    return true;
+                if (rc.Left < threshold) return true;
+                if (rc.Height > tbH + 24) return true;
+                if (rc.Width > (tb.Right - tb.Left) * 0.4) return true;
+                if (rc.Left < best) best = rc.Left;
+                return true;
+            }, IntPtr.Zero);
+
+            return best;
+        }
+
+        private static IntPtr FindDescendantByClass(IntPtr root, string className)
+        {
+            IntPtr found = IntPtr.Zero;
+            EnumChildWindows(root, (hwnd, _) =>
+            {
+                var sb = new StringBuilder(64);
+                Win32Helper.GetClassName(hwnd, sb, sb.Capacity);
+                if (string.Equals(sb.ToString(), className, StringComparison.Ordinal))
+                {
+                    found = hwnd;
+                    return false;
+                }
+                return true;
+            }, IntPtr.Zero);
+            return found;
+        }
+
+        private static IntPtr FindBestTaskList(IntPtr taskbar)
+        {
+            IntPtr best = IntPtr.Zero;
+            int bestArea = 0;
+            EnumChildWindows(taskbar, (hwnd, _) =>
+            {
+                var sb = new StringBuilder(64);
+                Win32Helper.GetClassName(hwnd, sb, sb.Capacity);
+                if (!string.Equals(sb.ToString(), "MSTaskListWClass", StringComparison.Ordinal))
+                    return true;
+                if (!Win32Helper.GetWindowRect(hwnd, out Win32Helper.RECT rc) || rc.Width < 8)
+                    return true;
+                int area = rc.Width * Math.Max(1, rc.Height);
+                if (area > bestArea)
+                {
+                    bestArea = area;
+                    best = hwnd;
+                }
+                return true;
+            }, IntPtr.Zero);
+            return best;
+        }
+
+        /// <summary>
+        /// X между последней иконкой и треем выбранного таскбара. Hot path — только кэш.
+        /// </summary>
+        private bool TryGetTaskbarDragRange(IntPtr taskbar, Win32Helper.RECT tb, int overlayWidth, out int minX, out int maxX)
+        {
+            int margin = Math.Max(4, (int)(4 * _dpiScale));
+
+            if (!_taskbarBounds.TryGetValue((nint)taskbar, out var cache))
+            {
+                // Промах (смена монитора) — один синхронный пересчёт этой панели
+                RefreshOneTaskbarBounds(taskbar);
+                if (!_taskbarBounds.TryGetValue((nint)taskbar, out cache))
+                {
+                    minX = tb.Left + (int)(48 * _dpiScale);
+                    maxX = tb.Right - overlayWidth - margin;
+                    if (maxX < minX) minX = maxX;
+                    return true;
+                }
+            }
+
+            minX = cache.IconRight + margin;
+            maxX = cache.TrayLeft - overlayWidth - margin;
+            if (maxX < minX)
+                minX = maxX;
+            return true;
+        }
+
+        private int TryGetStartButtonRight(IntPtr taskbar, Win32Helper.RECT tb)
+        {
+            int best = 0;
+            IntPtr start = FindWindowEx(taskbar, IntPtr.Zero, "Start", null);
+            if (start == IntPtr.Zero)
+                start = FindDescendantByClass(taskbar, "Start");
+            if (start != IntPtr.Zero && Win32Helper.GetWindowRect(start, out Win32Helper.RECT sr) && sr.Width > 0)
+                best = sr.Right;
+
+            EnumChildWindows(taskbar, (hwnd, _) =>
+            {
+                var cls = new StringBuilder(64);
+                Win32Helper.GetClassName(hwnd, cls, cls.Capacity);
+                string name = cls.ToString();
+                if (name is not ("Start" or "LaunchBand"))
+                    return true;
+                if (!Win32Helper.GetWindowRect(hwnd, out Win32Helper.RECT rc) || rc.Width < 8) return true;
+                if (rc.Left > tb.Left + (tb.Right - tb.Left) / 3) return true;
+                if (rc.Right > best && rc.Right < tb.Left + (int)(400 * _dpiScale))
+                    best = rc.Right;
+                return true;
+            }, IntPtr.Zero);
+
+            return best;
+        }
+
+        private int? TryGetLastTaskIconRight(IntPtr taskbar, Win32Helper.RECT tb, int trayLeft)
+        {
+            IntPtr taskList = FindBestTaskList(taskbar);
+            if (taskList == IntPtr.Zero)
+            {
+                IntPtr rebar = FindWindowEx(taskbar, IntPtr.Zero, "ReBarWindow32", null);
+                IntPtr taskSw = FindWindowEx(rebar != IntPtr.Zero ? rebar : taskbar, IntPtr.Zero, "MSTaskSwWClass", null);
+                taskList = FindWindowEx(
+                    taskSw != IntPtr.Zero ? taskSw : (rebar != IntPtr.Zero ? rebar : taskbar),
+                    IntPtr.Zero, "MSTaskListWClass", null);
+            }
+            if (taskList == IntPtr.Zero) return null;
+
+            int tbH = Math.Max(1, tb.Bottom - tb.Top);
+            int best = 0;
+
+            // Win10: кнопки ToolbarWindow32
+            EnumChildWindows(taskList, (hwnd, _) =>
+            {
+                var cls = new StringBuilder(64);
+                Win32Helper.GetClassName(hwnd, cls, cls.Capacity);
+                if (!string.Equals(cls.ToString(), "ToolbarWindow32", StringComparison.Ordinal))
+                    return true;
+
+                int count = SendMessage(hwnd, TB_BUTTONCOUNT, IntPtr.Zero, IntPtr.Zero).ToInt32();
+                for (int i = 0; i < count; i++)
+                {
+                    var rc = new Win32Helper.RECT();
+                    if (SendMessageRect(hwnd, TB_GETITEMRECT, (IntPtr)i, ref rc) == IntPtr.Zero)
+                        continue;
+                    var tl = new POINT { x = rc.Left, y = rc.Top };
+                    var br = new POINT { x = rc.Right, y = rc.Bottom };
+                    ClientToScreen(hwnd, ref tl);
+                    ClientToScreen(hwnd, ref br);
+                    int w = br.x - tl.x;
+                    if (w < 6 || br.x >= trayLeft) continue;
+                    if (br.x > best) best = br.x;
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            if (best > tb.Left + 8)
+                return best;
+
+            // Win11 / fallback: компактные HWND иконок внутри списка (не сам контейнер)
+            EnumChildWindows(taskList, (hwnd, _) =>
+            {
+                if (hwnd == taskList) return true;
+                if (!Win32Helper.GetWindowRect(hwnd, out Win32Helper.RECT rc) || rc.Width < 8)
+                    return true;
+                if (rc.Right >= trayLeft - 2) return true;
+                if (rc.Height > tbH + 20) return true;
+                if (rc.Width > Math.Max(tbH * 3, (int)(72 * _dpiScale))) return true;
+                if (rc.Right > best) best = rc.Right;
+                return true;
+            }, IntPtr.Zero);
+
+            if (best > tb.Left + 8)
+                return best;
+
+            best = Math.Max(best, TryGetLastIconRightViaUia(taskList, tb, trayLeft));
+            if (best <= tb.Left + 8)
+                best = Math.Max(best, TryGetLastIconRightViaUia(taskbar, tb, trayLeft));
+
+            return best > tb.Left + 8 ? best : null;
+        }
+
+        private static int TryGetLastIconRightViaUia(IntPtr hwnd, Win32Helper.RECT tb, int trayLeft)
+        {
+            try
+            {
+                var root = System.Windows.Automation.AutomationElement.FromHandle(hwnd);
+                if (root == null) return 0;
+
+                var condition = new System.Windows.Automation.OrCondition(
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.ControlTypeProperty,
+                        System.Windows.Automation.ControlType.ListItem),
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.ControlTypeProperty,
+                        System.Windows.Automation.ControlType.Button),
+                    new System.Windows.Automation.PropertyCondition(
+                        System.Windows.Automation.AutomationElement.ControlTypeProperty,
+                        System.Windows.Automation.ControlType.MenuItem));
+
+                var children = root.FindAll(System.Windows.Automation.TreeScope.Descendants, condition);
+                double uiaBest = 0;
+                int tbH = Math.Max(1, tb.Bottom - tb.Top);
+                for (int i = 0; i < children.Count; i++)
+                {
+                    var r = children[i].Current.BoundingRectangle;
+                    if (r.IsEmpty || r.Width < 4 || r.Width > Math.Max(tbH * 4, 96)) continue;
+                    if (r.Right >= trayLeft) continue;
+                    if (r.Top > tb.Bottom + 4 || r.Bottom < tb.Top - 4) continue;
+                    if (r.Right > uiaBest) uiaBest = r.Right;
+                }
+                return uiaBest > tb.Left + 8 ? (int)Math.Round(uiaBest) : 0;
+            }
+            catch
+            {
+                return 0;
             }
         }
 
@@ -552,15 +989,17 @@ namespace Kil0bitSystemMonitor
 
         private string FormatDiskSpeed(float kbps)
         {
-            if (kbps >= 1024 * 1024) return $"{(kbps / 1024f / 1024f):F1} GB/s";
-            if (kbps >= 1024f) return $"{(kbps / 1024f):F1} MB/s";
-            return $"{kbps:F0} KB/s";
+            var L = LocalizationService.Instance;
+            if (kbps >= 1024 * 1024) return L.Format("Unit.NetGBps", kbps / 1024f / 1024f);
+            if (kbps >= 1024f) return L.Format("Unit.NetMBps", kbps / 1024f);
+            return L.Format("Unit.NetKBpsInt", kbps);
         }
 
         private System.Collections.Generic.List<(MetricItem? Top, MetricItem? Bottom)> PrepareMetricsData()
         {
             bool compact = (_config.Config.DisplayStyle ?? "Text") == "Compact";
             var m = _viewModel.Metrics; var c = _config.Config;
+            var L = LocalizationService.Instance;
 
             MetricItem Pct(string f, string cp, string v)  => new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "100%" };
             MetricItem Temp(string f, string cp, string v) => new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "100°" };
@@ -570,14 +1009,20 @@ namespace Kil0bitSystemMonitor
             var list = new System.Collections.Generic.List<(MetricItem?, MetricItem?)>();
 
             if (c.ShowNetUp || c.ShowNetDown)
-                list.Add((c.ShowNetUp ? Net("UP ", "U", m.NetUpText) : null, c.ShowNetDown ? Net("DN ", "D", m.NetDownText) : null));
+                list.Add((
+                    c.ShowNetUp ? Net(L["Overlay.Label.Up"], L["Overlay.Label.Compact.Up"], m.NetUpText) : null,
+                    c.ShowNetDown ? Net(L["Overlay.Label.Down"], L["Overlay.Label.Compact.Down"], m.NetDownText) : null));
 
             if (c.ShowCpu || c.ShowRam)
-                list.Add((c.ShowCpu ? Pct("CPU", "C", $"{(int)m.CpuUsage}%") : null, c.ShowRam ? Pct("RAM", "R", $"{(int)m.RamPercent}%") : null));
+                list.Add((
+                    c.ShowCpu ? Pct(L["Overlay.Label.Cpu"], L["Overlay.Label.Compact.Cpu"], $"{(int)m.CpuUsage}%") : null,
+                    c.ShowRam ? Pct(L["Overlay.Label.Ram"], L["Overlay.Label.Compact.Ram"], $"{(int)m.RamPercent}%") : null));
 
-            string tempStr = m.GpuTemperature > 0 ? $"{(int)m.GpuTemperature}°" : "N/A";
+            string tempStr = m.GpuTemperature > 0 ? $"{(int)m.GpuTemperature}°" : L["Overlay.Label.Na"];
             if (c.ShowGpu || c.ShowTemp)
-                list.Add((c.ShowGpu ? Pct("GPU", "G", $"{(int)m.GpuUsage}%") : null, c.ShowTemp ? Temp("TMP", "T", tempStr) : null));
+                list.Add((
+                    c.ShowGpu ? Pct(L["Overlay.Label.Gpu"], L["Overlay.Label.Compact.Gpu"], $"{(int)m.GpuUsage}%") : null,
+                    c.ShowTemp ? Temp(L["Overlay.Label.Temp"], L["Overlay.Label.Compact.Temp"], tempStr) : null));
 
             if (c.ShowDisk || c.ShowDiskSpeed)
             {
@@ -591,11 +1036,11 @@ namespace Kil0bitSystemMonitor
                         if (colonIdx > 0) letter = letter.Substring(colonIdx - 1, 1);
                         else if (letter.Length > 0) letter = letter.Substring(0, 1);
 
-                        string cdkLabel = letter.ToUpper() + "DK";
+                        string cdkLabel = L.Format("Overlay.Label.Disk", letter.ToUpper());
 
                         list.Add((
                             c.ShowDisk ? Pct(cdkLabel, letter, $"{(int)d.SpacePercent}%") : null,
-                            c.ShowDiskSpeed ? Pct("SPD", "S", $"{(int)d.ActivityPercent}%") : null
+                            c.ShowDiskSpeed ? Pct(L["Overlay.Label.Speed"], L["Overlay.Label.Compact.Speed"], $"{(int)d.ActivityPercent}%") : null
                         ));
                     }
                 }
@@ -667,46 +1112,217 @@ namespace Kil0bitSystemMonitor
 
         public void Dispose()
         {
-            try { _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon); } catch { }
+            try
+            {
+                _dispatcher.BeginInvoke(() =>
+                {
+                    try { _processListWindow?.Close(); } catch { }
+                    _processListWindow = null;
+                });
+                _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); UnregisterShellHook(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);
+            }
+            catch { }
         }
 
         private IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            if (_wmShellHook != 0 && msg == _wmShellHook)
+            {
+                OnShellHook(wParam);
+                return IntPtr.Zero;
+            }
             if (msg == 0x0084) return (IntPtr)1;
             if (msg == 0x0010) return IntPtr.Zero; // WM_CLOSE — ignore, overlay is not closeable
             if (msg == WM_WINDOWPOSCHANGING && _config.Config.StickToTaskbar)
             {
                 WINDOWPOS pos = Marshal.PtrToStructure<WINDOWPOS>(lParam);
-                IntPtr taskbar = Win32Helper.FindWindow("Shell_TrayWnd", "");
-                if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb)) { int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor); pos.y = tb.Top + (tb.Bottom - tb.Top - oh) / 2; Marshal.StructureToPtr(pos, lParam, false); }
+                // SWP_NOMOVE = 0x0002 — монитор берём по курсору, границы — у его таскбара
+                if ((pos.flags & 0x0002) == 0)
+                {
+                    IntPtr taskbar = IntPtr.Zero;
+                    if (Win32Helper.GetCursorPos(out Win32Helper.POINT cursor))
+                        taskbar = ResolveTaskbarForPoint(cursor.X, cursor.Y);
+                    if (taskbar == IntPtr.Zero)
+                        taskbar = ResolveTaskbarForPoint(pos.x + Math.Max(pos.cx, 1) / 2, pos.y);
+
+                    if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
+                    {
+                        EnsureAttachedToTaskbar(taskbar);
+                        int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
+                        pos.y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
+
+                        int overlayW = pos.cx > 0 ? pos.cx : (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur) ? cur.Width : 200);
+                        if (TryGetTaskbarDragRange(taskbar, tb, overlayW, out int minX, out int maxX))
+                            pos.x = Math.Max(minX, Math.Min(maxX, pos.x));
+
+                        Marshal.StructureToPtr(pos, lParam, false);
+                    }
+                }
+                else
+                {
+                    IntPtr taskbar = ResolveTaskbarForPoint(pos.x + Math.Max(pos.cx, 1) / 2, pos.y);
+                    if (taskbar == IntPtr.Zero)
+                        taskbar = Win32Helper.FindWindow("Shell_TrayWnd", "");
+                    if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
+                    {
+                        int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
+                        pos.y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
+                        Marshal.StructureToPtr(pos, lParam, false);
+                    }
+                }
             }
-            if (msg == WM_WINDOWPOSCHANGED) { if (_appbarRegistered) { APPBARDATA abd = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = _hWnd }; SHAppBarMessage(ABM_WINDOWPOSCHANGED, ref abd); } return IntPtr.Zero; }
+            if (msg == WM_WINDOWPOSCHANGED)
+            {
+                if (_appbarRegistered)
+                {
+                    APPBARDATA abd = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = _hWnd };
+                    SHAppBarMessage(ABM_WINDOWPOSCHANGED, ref abd);
+                }
+                if (_processListWindow != null && _processListWindow.IsVisible)
+                    _processListWindow.RepositionFromOverlay();
+                return IntPtr.Zero;
+            }
             if (msg == WM_APPBAR_CALLBACK) { if ((uint)wParam.ToInt32() == ABN_FULLSCREENAPP) { _shellFullscreen = (lParam != IntPtr.Zero); _dispatcher.BeginInvoke(UpdateVisibility); } return IntPtr.Zero; }
-            if (msg == WM_EXITSIZEMOVE) { if (Win32Helper.GetWindowRect(hWnd, out Win32Helper.RECT r)) { _config.Config.X = r.Left; _config.Config.Y = r.Top; _config.SaveConfig(); } }
+            if (msg == WM_EXITSIZEMOVE)
+            {
+                _lastDragEndTick = Environment.TickCount64;
+                _lButtonDown = false;
+                _lButtonDragged = false;
+                if (Win32Helper.GetWindowRect(hWnd, out Win32Helper.RECT r))
+                {
+                    if (_config.Config.StickToTaskbar)
+                    {
+                        IntPtr taskbar = ResolveTaskbarForPoint(r.Left + r.Width / 2, r.Top + r.Height / 2);
+                        if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb) &&
+                            TryGetTaskbarDragRange(taskbar, tb, r.Width, out int minX, out int maxX))
+                        {
+                            EnsureAttachedToTaskbar(taskbar);
+                            int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
+                            int y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
+                            int x = Math.Max(minX, Math.Min(maxX, r.Left));
+                            if (x != r.Left || y != r.Top)
+                                SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010);
+                            _config.Config.X = x;
+                            _config.Config.Y = y;
+                        }
+                        else
+                        {
+                            _config.Config.X = r.Left;
+                            _config.Config.Y = r.Top;
+                        }
+                    }
+                    else
+                    {
+                        _config.Config.X = r.Left;
+                        _config.Config.Y = r.Top;
+                    }
+                    _config.SaveConfig();
+                }
+                return IntPtr.Zero;
+            }
             if (msg == WM_SHOW_SETTINGS) { _dispatcher.BeginInvoke(() => App.OpenSettings(_viewModel, _config)); return IntPtr.Zero; }
-            if (msg == WM_DPICHANGED) { _currentDpi = (uint)(wParam.ToInt32() & 0xFFFF); _dpiScale = _currentDpi / 96.0f; ClearCaches(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
-            if (msg == WM_DISPLAYCHANGE || msg == WM_SETTINGCHANGE) { AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
-            if (msg == WM_MOUSEMOVE) { if (!_trackingMouse) { TRACKMOUSEEVENT tme = new TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf(typeof(TRACKMOUSEEVENT)), dwFlags = TME_LEAVE, hwndTrack = hWnd }; TrackMouseEvent(ref tme); _trackingMouse = true; _isHovered = true; UpdateLayer(); } }
+            if (msg == WM_DPICHANGED) { _currentDpi = (uint)(wParam.ToInt32() & 0xFFFF); _dpiScale = _currentDpi / 96.0f; ClearCaches(); ScheduleTaskbarBoundsRefresh(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
+            if (msg == WM_DISPLAYCHANGE || msg == WM_SETTINGCHANGE) { ScheduleTaskbarBoundsRefresh(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
+            if (msg == WM_MOUSEMOVE)
+            {
+                if (!_trackingMouse)
+                {
+                    TRACKMOUSEEVENT tme = new TRACKMOUSEEVENT { cbSize = (uint)Marshal.SizeOf(typeof(TRACKMOUSEEVENT)), dwFlags = TME_LEAVE, hwndTrack = hWnd };
+                    TrackMouseEvent(ref tme);
+                    _trackingMouse = true;
+                    _isHovered = true;
+                    UpdateLayer();
+                }
+
+                if (_lButtonDown && !_lButtonDragged && !_config.Config.LockPosition &&
+                    Win32Helper.GetCursorPos(out Win32Helper.POINT cur))
+                {
+                    int dx = Math.Abs(cur.X - _lButtonDownScreenX);
+                    int dy = Math.Abs(cur.Y - _lButtonDownScreenY);
+                    if (dx > DragThresholdPx || dy > DragThresholdPx)
+                    {
+                        _lButtonDragged = true;
+                        ReleaseCapture();
+                        SendMessage(hWnd, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                        return IntPtr.Zero;
+                    }
+                }
+            }
             if (msg == WM_MOUSELEAVE) { _trackingMouse = false; _isHovered = false; UpdateLayer(); }
-            if (msg == WM_LBUTTONDBLCLK) { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr") { UseShellExecute = true }); return IntPtr.Zero; }
-            if (msg == WM_LBUTTONDOWN) { if (_config.Config.LockPosition) return IntPtr.Zero; ReleaseCapture(); SendMessage(hWnd, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero); return IntPtr.Zero; }
+            if (msg == WM_LBUTTONDBLCLK)
+            {
+                _lButtonDown = false;
+                // Дабл-клик → taskmgr только в режиме TaskManager (иначе конфликтует с popup)
+                if (!_config.Config.IsProcessListClickMode)
+                {
+                    DebugLogger.Info("Overlay.Click", "DBLCLK → Task Manager");
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr") { UseShellExecute = true });
+                }
+                else
+                {
+                    DebugLogger.Info("Overlay.Click", "DBLCLK ignored (ProcessList mode)");
+                }
+                return IntPtr.Zero;
+            }
+            if (msg == WM_LBUTTONDOWN)
+            {
+                _lButtonDown = true;
+                _lButtonDragged = false;
+                if (Win32Helper.GetCursorPos(out Win32Helper.POINT downPt))
+                {
+                    _lButtonDownScreenX = downPt.X;
+                    _lButtonDownScreenY = downPt.Y;
+                }
+                DebugLogger.Info("Overlay.Click", $"DOWN screen=({_lButtonDownScreenX},{_lButtonDownScreenY}) mode={_config.Config.OverlayClickMode}");
+                SetCapture(hWnd);
+                return IntPtr.Zero;
+            }
+            if (msg == WM_LBUTTONUP)
+            {
+                bool wasDown = _lButtonDown;
+                bool wasDragged = _lButtonDragged;
+                long sinceDrag = Environment.TickCount64 - _lastDragEndTick;
+                _lButtonDown = false;
+                _lButtonDragged = false;
+                if (GetCapture() == hWnd)
+                    ReleaseCapture();
+
+                if (wasDown && !wasDragged && sinceDrag >= PostDragClickGuardMs)
+                {
+                    if (_config.Config.IsProcessListClickMode)
+                    {
+                        DebugLogger.Info("Overlay.Click", "UP → ToggleProcessList");
+                        _dispatcher.BeginInvoke(ToggleProcessList);
+                    }
+                    else
+                    {
+                        DebugLogger.Info("Overlay.Click", "UP ignored (TaskManager mode — use double-click)");
+                    }
+                }
+                else
+                {
+                    DebugLogger.Info("Overlay.Click", $"UP skipped down={wasDown} dragged={wasDragged} sinceDrag={sinceDrag}");
+                }
+                return IntPtr.Zero;
+            }
             if (msg == WM_RBUTTONUP)
             {
                 if (Win32Helper.GetCursorPos(out Win32Helper.POINT pt))
                 {
                     SetPreferredAppMode(2); AllowDarkModeForWindow(hWnd, true); FlushMenuThemes();
                     IntPtr hMenu = CreatePopupMenu();
-                    AppendMenu(hMenu, 0, 1001, "Settings");
-                    AppendMenu(hMenu, 0, 1002, "Task Manager");
+                    var L = LocalizationService.Instance;
+                    AppendMenu(hMenu, 0, 1001, L["Overlay.Menu.Settings"]);
+                    AppendMenu(hMenu, 0, 1002, L["Overlay.Menu.TaskManager"]);
                     AppendMenu(hMenu, 0x0800, 0, null);
-                    AppendMenu(hMenu, (_config.Config.AlwaysOnTop ? 0x0008U : 0), 1008, "Keep on Top");
-                    AppendMenu(hMenu, (_config.Config.HideOnFullscreen ? 0x0008U : 0), 1009, "Hide in Fullscreen");
-                    AppendMenu(hMenu, (_config.Config.LockPosition ? 0x0008U : 0), 1006, "Lock Position");
-                    AppendMenu(hMenu, (_config.Config.StickToTaskbar ? 0x0008U : 0), 1007, "Snap to Taskbar");
+                    AppendMenu(hMenu, (_config.Config.AlwaysOnTop ? 0x0008U : 0), 1008, L["Overlay.Menu.KeepOnTop"]);
+                    AppendMenu(hMenu, (_config.Config.HideOnFullscreen ? 0x0008U : 0), 1009, L["Overlay.Menu.HideFullscreen"]);
+                    AppendMenu(hMenu, (_config.Config.LockPosition ? 0x0008U : 0), 1006, L["Overlay.Menu.LockPosition"]);
+                    AppendMenu(hMenu, (_config.Config.StickToTaskbar ? 0x0008U : 0), 1007, L["Overlay.Menu.SnapTaskbar"]);
                     AppendMenu(hMenu, 0x0800, 0, null);
-                    AppendMenu(hMenu, 0, 1003, "About");
+                    AppendMenu(hMenu, 0, 1003, L["Overlay.Menu.About"]);
                     AppendMenu(hMenu, 0x0800, 0, null);
-                    AppendMenu(hMenu, 0, 1004, "Exit");
+                    AppendMenu(hMenu, 0, 1004, L["Overlay.Menu.Exit"]);
                     SetForegroundWindow(hWnd);
 
                     Win32Helper.GetWindowRect(hWnd, out Win32Helper.RECT wr);
@@ -744,10 +1360,42 @@ namespace Kil0bitSystemMonitor
             return DefWindowProc(hWnd, msg, wParam, lParam);
         }
 
+        private void ToggleProcessList()
+        {
+            try
+            {
+                if (_processListWindow != null && _processListWindow.IsVisible)
+                {
+                    DebugLogger.Info("ProcessList", "close");
+                    _processListWindow.Close();
+                    _processListWindow = null;
+                    return;
+                }
+
+                DebugLogger.Info("ProcessList", "open");
+                _processListWindow = new ProcessListWindow(_config, _hWnd);
+                var win = _processListWindow;
+                win.Closed += (_, _) =>
+                {
+                    if (ReferenceEquals(_processListWindow, win))
+                        _processListWindow = null;
+                };
+                win.Show();
+                win.Activate();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.Error("ProcessList", ex.Message);
+            }
+        }
+
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct WNDCLASSEX { public uint cbSize; public uint style; public IntPtr lpfnWndProc; public int cbClsExtra; public int cbWndExtra; public IntPtr hInstance; public IntPtr hIcon; public IntPtr hCursor; public IntPtr hbrBackground; public string lpszMenuName; public string lpszClassName; public IntPtr hIconSm; }
         [StructLayout(LayoutKind.Sequential)] struct SIZE { public int cx; public int cy; }
         [StructLayout(LayoutKind.Sequential)] struct POINT { public int x; public int y; }
         [StructLayout(LayoutKind.Sequential, Pack = 1)] struct BLENDFUNCTION { public byte BlendOp; public byte BlendFlags; public byte SourceConstantAlpha; public byte AlphaFormat; }
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterWindowMessage(string lpString);
+        [DllImport("user32.dll")] static extern bool RegisterShellHookWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern bool DeregisterShellHookWindow(IntPtr hWnd);
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern ushort RegisterClassEx(ref WNDCLASSEX wc);
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(int ex, string cl, string nm, uint st, int x, int y, int w, int h, IntPtr p, IntPtr m, IntPtr i, IntPtr lp);
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr ha, int x, int y, int cx, int cy, uint f);
@@ -764,7 +1412,20 @@ namespace Kil0bitSystemMonitor
         [DllImport("gdi32.dll")] static extern IntPtr SelectObject(IntPtr h, IntPtr o);
         [DllImport("gdi32.dll")] static extern bool DeleteObject(IntPtr o);
         [DllImport("user32.dll")] static extern bool ReleaseCapture();
+        [DllImport("user32.dll")] static extern IntPtr SetCapture(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern IntPtr GetCapture();
         [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, uint m, IntPtr w, IntPtr l);
+        [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+        static extern IntPtr SendMessageRect(IntPtr h, uint m, IntPtr w, ref Win32Helper.RECT l);
+        private const uint TB_BUTTONCOUNT = 0x0418;
+        private const uint TB_GETITEMRECT = 0x041D;
+        [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? className, string? windowName);
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+        [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr hWndParent, EnumWindowsProc lpEnumFunc, IntPtr lParam);
+        [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+        [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint f);
         [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
         [StructLayout(LayoutKind.Sequential)] struct TRACKMOUSEEVENT { public uint cbSize; public uint dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
         [DllImport("user32.dll")] static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT e);
@@ -777,7 +1438,6 @@ namespace Kil0bitSystemMonitor
         [DllImport("uxtheme.dll", EntryPoint = "#135")] static extern int SetPreferredAppMode(int m);
         [DllImport("uxtheme.dll", EntryPoint = "#136")] static extern void FlushMenuThemes();
         [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-        [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint f);
         [StructLayout(LayoutKind.Sequential)] public struct MONITORINFO { public uint cbSize; public Win32Helper.RECT rcMonitor; public Win32Helper.RECT rcWork; public uint dwFlags; }
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern bool GetMonitorInfo(IntPtr h, ref MONITORINFO m);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint GetDpiForWindow(IntPtr h);

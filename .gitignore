@@ -496,3 +496,8 @@ kil0bit-system-monitor/config.json
 .vscode/
 bin/
 obj/
+
+# App debug logs
+log/
+**/log/debug-*.log
+

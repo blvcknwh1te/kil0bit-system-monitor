@@ -61,6 +61,14 @@ namespace Kil0bitSystemMonitor.Models
         private bool _showPods = true;
         private string _podColorHex = "#0FFFFFFF"; 
         private bool _alwaysOnTop = true;
+        private string _processListSortColumn = ProcessListSortColumns.Name;
+        private bool _processListSortAscending = true;
+        private string _language = "en";
+        // ProcessList = одиночный клик → popup; TaskManager = дабл-клик → taskmgr
+        private string _overlayClickMode = "ProcessList";
+        private bool _debugLogEnabled = false;
+        private string _debugLogRetention = "Week"; // Day | Week | Month
+        private bool _processListShowIcons = true;
 
         // Per-section label colors (null = use global LabelColorHex)
         private string? _netLabelColorHex = null;
@@ -106,6 +114,72 @@ namespace Kil0bitSystemMonitor.Models
         public bool ShowPods { get => _showPods; set { _showPods = value; OnPropertyChanged(); } }
         public string PodColorHex { get => _podColorHex; set { _podColorHex = value; OnPropertyChanged(); OnPropertyChanged(nameof(PodColor)); } }
         public bool AlwaysOnTop { get => _alwaysOnTop; set { _alwaysOnTop = value; OnPropertyChanged(); } }
+        public string ProcessListSortColumn
+        {
+            get => _processListSortColumn;
+            set
+            {
+                if (_processListSortColumn == value) return;
+                _processListSortColumn = value;
+                ProcessListSortAscending = value == ProcessListSortColumns.Name;
+                OnPropertyChanged();
+            }
+        }
+        public bool ProcessListSortAscending { get => _processListSortAscending; set { _processListSortAscending = value; OnPropertyChanged(); } }
+        public string Language
+        {
+            get => _language;
+            set
+            {
+                string normalized = string.Equals(value, "ru", StringComparison.OrdinalIgnoreCase) ? "ru" : "en";
+                if (_language == normalized) return;
+                _language = normalized;
+                OnPropertyChanged();
+            }
+        }
+        public string OverlayClickMode
+        {
+            get => _overlayClickMode;
+            set
+            {
+                string normalized = string.Equals(value, "TaskManager", StringComparison.OrdinalIgnoreCase)
+                    ? "TaskManager" : "ProcessList";
+                if (_overlayClickMode == normalized) return;
+                _overlayClickMode = normalized;
+                OnPropertyChanged();
+            }
+        }
+        public bool IsProcessListClickMode =>
+            !string.Equals(_overlayClickMode, "TaskManager", StringComparison.OrdinalIgnoreCase);
+
+        public bool DebugLogEnabled
+        {
+            get => _debugLogEnabled;
+            set { if (_debugLogEnabled == value) return; _debugLogEnabled = value; OnPropertyChanged(); }
+        }
+
+        public bool ProcessListShowIcons
+        {
+            get => _processListShowIcons;
+            set { if (_processListShowIcons == value) return; _processListShowIcons = value; OnPropertyChanged(); }
+        }
+
+        public string DebugLogRetention
+        {
+            get => _debugLogRetention;
+            set
+            {
+                string normalized = value?.Trim() switch
+                {
+                    "Day" => "Day",
+                    "Month" => "Month",
+                    _ => "Week"
+                };
+                if (_debugLogRetention == normalized) return;
+                _debugLogRetention = normalized;
+                OnPropertyChanged();
+            }
+        }
 
         // Per-section label colors (null/empty = inherit global LabelColorHex)
         public string? NetLabelColorHex { get => _netLabelColorHex; set { _netLabelColorHex = value; OnPropertyChanged(); } }

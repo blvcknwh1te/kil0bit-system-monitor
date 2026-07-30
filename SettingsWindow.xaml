@@ -184,6 +184,11 @@
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <!-- Column 0 -->
@@ -196,10 +201,10 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:FontIcon Glyph="&#xE7B3;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Show Overlay" FontWeight="SemiBold" FontSize="15"/>
+                                        <TextBlock Text="Show Overlay" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Enable or disable the monitor." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.ShowOverlay, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.ShowOverlay, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
                                 </Grid>
                             </Border>
 
@@ -212,10 +217,10 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:FontIcon Glyph="&#xE718;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Lock Position" FontWeight="SemiBold" FontSize="15"/>
+                                        <TextBlock Text="Lock Position" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Prevent accidental dragging." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.LockPosition, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.LockPosition, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
                                 </Grid>
                             </Border>
 
@@ -228,10 +233,10 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:FontIcon Glyph="&#xE72A;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Run at Startup" FontWeight="SemiBold" FontSize="15"/>
+                                        <TextBlock Text="Run at Startup" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Launch with Windows." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.LaunchOnStartup, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.LaunchOnStartup, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
                                 </Grid>
                             </Border>
 
@@ -245,10 +250,10 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:FontIcon Glyph="&#xE740;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Hide in Fullscreen" FontWeight="SemiBold" FontSize="15"/>
+                                        <TextBlock Text="Hide in Fullscreen" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Hide during games/movies." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.HideOnFullscreen, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.HideOnFullscreen, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
                                 </Grid>
                             </Border>
 
@@ -261,10 +266,10 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:FontIcon Glyph="&#xE90E;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Snap to Taskbar" FontWeight="SemiBold" FontSize="15"/>
+                                        <TextBlock Text="Snap to Taskbar" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Dock to the taskbar area." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.StickToTaskbar, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.StickToTaskbar, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
                                 </Grid>
                             </Border>
 
@@ -277,10 +282,10 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:FontIcon Glyph="&#xE819;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Keep on Top" FontWeight="SemiBold" FontSize="15"/>
+                                        <TextBlock Text="Keep on Top" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Stay above other windows." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.AlwaysOnTop, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.AlwaysOnTop, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
                                 </Grid>
                             </Border>
 
@@ -294,7 +299,7 @@
                                     </Grid.ColumnDefinitions>
                                     <ui:FontIcon Glyph="&#xE916;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Refresh Rate" FontWeight="SemiBold" FontSize="15"/>
+                                        <TextBlock Text="Refresh Rate" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Set how often the monitor updates its metrics." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     
@@ -320,6 +325,116 @@
                                             </ComboBoxItem.Tag>
                                         </ComboBoxItem>
                                     </ComboBox>
+                                </Grid>
+                            </Border>
+
+                            <!-- Row 4: Process list default sort -->
+                            <Border Grid.Row="4" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE8CB;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Process List Sort" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Default sort when opening the process list from the overlay." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ComboBox x:Name="ProcessSortCombo" Grid.Column="2" SelectedValue="{Binding Config.ProcessListSortColumn, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="ProcessSortCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Name" Tag="Name"/>
+                                        <ComboBoxItem Content="CPU" Tag="Cpu"/>
+                                        <ComboBoxItem Content="Memory" Tag="Memory"/>
+                                        <ComboBoxItem Content="Disk" Tag="Disk"/>
+                                        <ComboBoxItem Content="Network" Tag="Network"/>
+                                    </ComboBox>
+                                </Grid>
+                            </Border>
+
+                            <!-- Row 5: Process list icons -->
+                            <Border Grid.Row="5" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE8B9;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Show Process Icons" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Show application icons in the process list." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.ProcessListShowIcons, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
+                                </Grid>
+                            </Border>
+
+                            <!-- Row 6: Overlay click mode -->
+                            <Border Grid.Row="6" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="260" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE8B0;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Overlay Click Action" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Single click opens process list, or double-click opens Task Manager." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ComboBox x:Name="OverlayClickModeCombo" Grid.Column="2" SelectedValue="{Binding Config.OverlayClickMode, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                        <ComboBoxItem Content="Click → Process list" Tag="ProcessList"/>
+                                        <ComboBoxItem Content="Double-click → Task Manager" Tag="TaskManager"/>
+                                    </ComboBox>
+                                </Grid>
+                            </Border>
+
+                            <!-- Row 7: Language -->
+                            <Border Grid.Row="7" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE775;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Language" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Interface language for settings, menus, and process list." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ComboBox x:Name="LanguageCombo" Grid.Column="2" SelectedValue="{Binding Config.Language, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="LanguageCombo_SelectionChanged">
+                                        <ComboBoxItem Content="English" Tag="en"/>
+                                        <ComboBoxItem Content="Русский" Tag="ru"/>
+                                    </ComboBox>
+                                </Grid>
+                            </Border>
+
+                            <!-- Row 8: Debug log -->
+                            <Border Grid.Row="8" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto"/>
+                                        <RowDefinition Height="Auto"/>
+                                    </Grid.RowDefinitions>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE7BA;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Debug Log" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Write diagnostic events (clicks, coordinates) to log/ folder. Off by default." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.DebugLogEnabled, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
+
+                                    <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,12,0,0">
+                                        <TextBlock Text="Clear log after" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6"/>
+                                        <ComboBox x:Name="DebugLogRetentionCombo" SelectedValue="{Binding Config.DebugLogRetention, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="200">
+                                            <ComboBoxItem Content="1 day" Tag="Day"/>
+                                            <ComboBoxItem Content="1 week" Tag="Week"/>
+                                            <ComboBoxItem Content="1 month" Tag="Month"/>
+                                        </ComboBox>
+                                    </StackPanel>
                                 </Grid>
                             </Border>
                         </Grid>
@@ -469,13 +584,13 @@
                                         <TextBlock Text="Hardware Selection" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,16"/>
                                         
                                         <TextBlock Text="Network Adapter" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8"/>
-                                        <ComboBox x:Name="NetAdapterCombo" SelectedValue="{Binding Config.NetworkAdapter, Mode=TwoWay}" SelectedValuePath="Content" HorizontalAlignment="Stretch" Margin="0,0,0,16">
-                                            <ComboBoxItem Content="Default" />
+                                        <ComboBox x:Name="NetAdapterCombo" SelectedValue="{Binding Config.NetworkAdapter, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" Margin="0,0,0,16">
+                                            <ComboBoxItem Content="Default" Tag="Default" />
                                         </ComboBox>
 
                                         <TextBlock Text="Graphics Card" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8"/>
-                                        <ComboBox x:Name="GpuAdapterCombo" SelectedValue="{Binding Config.GpuAdapter, Mode=TwoWay}" SelectedValuePath="Content" HorizontalAlignment="Stretch" Margin="0,0,0,16">
-                                            <ComboBoxItem Content="Default" />
+                                        <ComboBox x:Name="GpuAdapterCombo" SelectedValue="{Binding Config.GpuAdapter, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" Margin="0,0,0,16">
+                                            <ComboBoxItem Content="Default" Tag="Default" />
                                         </ComboBox>
 
                                         <TextBlock Text="Storage Drives" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8"/>
@@ -527,9 +642,9 @@
                                         </ComboBox>
 
                                         <TextBlock Text="Display Mode" FontWeight="SemiBold" FontSize="12" Opacity="0.7" Margin="0,0,0,8"/>
-                                        <ComboBox SelectedValue="{Binding Config.DisplayStyle, Mode=TwoWay}" SelectedValuePath="Content" HorizontalAlignment="Stretch" Margin="0,0,0,16">
-                                            <ComboBoxItem Content="Text" />
-                                            <ComboBoxItem Content="Compact" />
+                                        <ComboBox SelectedValue="{Binding Config.DisplayStyle, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" Margin="0,0,0,16">
+                                            <ComboBoxItem Content="Text" Tag="Text" />
+                                            <ComboBoxItem Content="Compact" Tag="Compact" />
                                         </ComboBox>
 
                                         <ui:ToggleSwitch Header="Bold Text" IsOn="{Binding Config.IsTextBold, Mode=TwoWay}" />

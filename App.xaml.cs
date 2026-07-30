@@ -55,6 +55,7 @@ namespace Kil0bitSystemMonitor
             if (m_overlay != null) return;
             
             var config = new Kil0bitSystemMonitor.Services.ConfigService();
+            Kil0bitSystemMonitor.Services.LocalizationService.Instance.Initialize(config.Config.Language);
             
             m_dummyWindow = new Window();
             m_dummyWindow.Title = "Kil0bit System Monitor Host";

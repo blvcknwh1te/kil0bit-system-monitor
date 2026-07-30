@@ -618,16 +618,17 @@ namespace Kil0bitSystemMonitor.Services
 
         private string FormatNet(float kbps)
         {
+            var L = LocalizationService.Instance;
             if (kbps >= 1024 * 1024)    // ≥ 1 GB/s
-                return $"{(kbps / 1024f / 1024f):F1} GB/s";
+                return L.Format("Unit.NetGBps", kbps / 1024f / 1024f);
             if (kbps >= 1024f)           // ≥ 1 MB/s
             {
                 float mbps = kbps / 1024f;
-                if (mbps >= 100f) return $"{mbps:F0} MB/s"; // 125 MB/s
-                return $"{mbps:F1} MB/s";                   // 99.9 MB/s
+                if (mbps >= 100f) return L.Format("Unit.NetMBpsInt", mbps);
+                return L.Format("Unit.NetMBps", mbps);
             }
-            if (kbps >= 100f) return $"{kbps:F0} KB/s";     // 125 KB/s
-            return $"{kbps:F1} KB/s";                       // 99.9 KB/s
+            if (kbps >= 100f) return L.Format("Unit.NetKBpsInt", kbps);
+            return L.Format("Unit.NetKBps", kbps);
         }
 
 

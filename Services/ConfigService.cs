@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Kil0bitSystemMonitor.Models;
 
 namespace Kil0bitSystemMonitor.Services
@@ -8,6 +10,8 @@ namespace Kil0bitSystemMonitor.Services
     public class ConfigService
     {
         private readonly string _configPath;
+        private readonly object _saveGate = new();
+        private CancellationTokenSource? _saveCts;
         public AppConfig Config { get; private set; }
 
         public ConfigService()
@@ -19,18 +23,20 @@ namespace Kil0bitSystemMonitor.Services
 
             Config = LoadConfig();
 
-            // Ensure Windows Registry matches the loaded config unconditionally
             StartupService.SetStartup(Config.LaunchOnStartup);
 
-            // Auto-save and sync any future changes made from UI directly
             Config.PropertyChanged += (s, e) =>
             {
-                SaveConfig();
+                ScheduleSave();
                 if (e.PropertyName == nameof(AppConfig.LaunchOnStartup))
-                {
                     StartupService.SetStartup(Config.LaunchOnStartup);
-                }
+                if (e.PropertyName == nameof(AppConfig.Language))
+                    LocalizationService.Instance.SetLanguage(Config.Language);
+                if (e.PropertyName == nameof(AppConfig.DebugLogEnabled) || e.PropertyName == nameof(AppConfig.DebugLogRetention))
+                    DebugLogger.Configure(Config.DebugLogEnabled, Config.DebugLogRetention);
             };
+
+            DebugLogger.Configure(Config.DebugLogEnabled, Config.DebugLogRetention);
         }
 
         private AppConfig LoadConfig()
@@ -48,13 +54,37 @@ namespace Kil0bitSystemMonitor.Services
         }
 
         public event Action? SettingsChanged;
-        
+
+        private void ScheduleSave()
+        {
+            lock (_saveGate)
+            {
+                _saveCts?.Cancel();
+                _saveCts = new CancellationTokenSource();
+                var token = _saveCts.Token;
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(250, token);
+                        if (!token.IsCancellationRequested)
+                            SaveConfig();
+                    }
+                    catch (TaskCanceledException) { }
+                }, token);
+            }
+        }
+
         public void SaveConfig()
         {
             try
             {
-                string json = JsonSerializer.Serialize(Config, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(_configPath, json);
+                string json;
+                lock (_saveGate)
+                {
+                    json = JsonSerializer.Serialize(Config, new JsonSerializerOptions { WriteIndented = true });
+                    File.WriteAllText(_configPath, json);
+                }
                 SettingsChanged?.Invoke();
             }
             catch { }
