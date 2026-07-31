@@ -58,7 +58,8 @@
                       VirtualizingPanel.VirtualizationMode="Recycling"
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                       ScrollViewer.VerticalScrollBarVisibility="Auto"
-                      MouseDoubleClick="ProcessList_MouseDoubleClick">
+                      MouseDoubleClick="ProcessList_MouseDoubleClick"
+                      PreviewMouseRightButtonUp="ProcessList_PreviewMouseRightButtonUp">
                 <ListView.Resources>
                     <Style TargetType="GridViewColumnHeader">
                         <Setter Property="Background" Value="#22FFFFFF"/>
@@ -76,7 +77,9 @@
                     </Style>
                 </ListView.Resources>
                 <ListView.ContextMenu>
-                    <ContextMenu Opened="ContextMenu_Opened" Closed="ContextMenu_Closed">
+                    <ContextMenu x:Name="RowContextMenu"
+                                 Opened="ContextMenu_Opened"
+                                 Closed="ContextMenu_Closed">
                         <MenuItem x:Name="MenuEndTask" Header="End task" Click="EndTask_Click"/>
                         <MenuItem x:Name="MenuOpenLocation" Header="Open file location" Click="OpenLocation_Click"/>
                         <MenuItem x:Name="MenuProperties" Header="Properties" Click="Properties_Click"/>
@@ -102,10 +105,12 @@
                                                 Background="Transparent" BorderThickness="0"
                                                 Cursor="Hand" Focusable="False"
                                                 Visibility="{Binding ExpanderVisibility}"
+                                                IsHitTestVisible="{Binding IsExpandable}"
                                                 Click="Expand_Click"
                                                 VerticalAlignment="Center">
                                             <TextBlock Text="{Binding ExpanderGlyph}" FontSize="9"
-                                                       Foreground="#AAFFFFFF" HorizontalAlignment="Center"/>
+                                                       Foreground="#AAFFFFFF" HorizontalAlignment="Center"
+                                                       IsHitTestVisible="False"/>
                                         </Button>
                                         <TextBlock Text="{Binding DisplayName}"
                                                    Padding="{Binding NamePadding}"

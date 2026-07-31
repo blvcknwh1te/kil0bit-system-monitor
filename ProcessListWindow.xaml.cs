@@ -11,6 +11,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Kil0bitSystemMonitor.Helpers;
 using Kil0bitSystemMonitor.Models;
@@ -33,6 +34,10 @@ namespace Kil0bitSystemMonitor
         private bool _ready;
         private bool _refreshInFlight;
         private bool _repositionQueued;
+        private bool _contextMenuOpen;
+        private ProcessListRow? _contextRow;
+        private int[] _contextPids = Array.Empty<int>();
+        private string _contextExePath = "";
         private string _sortColumn;
         private bool _sortAscending;
         private int _closeGeneration;
@@ -173,7 +178,8 @@ namespace Kil0bitSystemMonitor
                 _expandedGroups.RemoveWhere(k => !liveNames.Contains(k));
 
                 StatusText.Text = LocalizationService.Instance.Format("Processes.Count", _processes.Count);
-                RebuildRows();
+                if (!_contextMenuOpen)
+                    RebuildRows();
             }
             catch { }
             finally { _refreshInFlight = false; }
@@ -181,6 +187,8 @@ namespace Kil0bitSystemMonitor
 
         private void RebuildRows()
         {
+            if (_contextMenuOpen) return;
+
             var groups = _processes.Values
                 .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
                 .Select(g => (Name: g.First().Name, Items: g.ToList()))
@@ -464,17 +472,47 @@ namespace Kil0bitSystemMonitor
             Close();
         }
 
+        private void CaptureContext(ProcessListRow? row)
+        {
+            _contextRow = row;
+            if (row == null)
+            {
+                _contextPids = Array.Empty<int>();
+                _contextExePath = "";
+                return;
+            }
+
+            _contextPids = row.Members.Select(m => m.Pid).Distinct().ToArray();
+            _contextExePath = !string.IsNullOrWhiteSpace(row.ExePath)
+                ? row.ExePath
+                : row.Members.Select(m => m.ExePath).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? "";
+        }
+
+        private ProcessListRow? RowFromSource(DependencyObject? src)
+        {
+            if (src == null) return ProcessList.SelectedItem as ProcessListRow;
+
+            var item = ItemsControl.ContainerFromElement(ProcessList, src) as System.Windows.Controls.ListViewItem
+                       ?? FindAncestor<System.Windows.Controls.ListViewItem>(src);
+            if (item != null)
+            {
+                item.IsSelected = true;
+                return item.DataContext as ProcessListRow;
+            }
+
+            return ProcessList.SelectedItem as ProcessListRow;
+        }
+
         private void EndTask_Click(object sender, RoutedEventArgs e)
         {
-            var row = SelectedRow;
-            if (row == null) return;
+            var pids = _contextPids;
+            if (pids.Length == 0) return;
 
-            var targets = row.IsGroup ? row.Members : row.Members;
-            foreach (var item in targets.ToList())
+            foreach (var pid in pids)
             {
                 try
                 {
-                    var p = Process.GetProcessById(item.Pid);
+                    var p = Process.GetProcessById(pid);
                     p.Kill(entireProcessTree: false);
                     p.Dispose();
                 }
@@ -493,11 +531,7 @@ namespace Kil0bitSystemMonitor
 
         private void OpenLocation_Click(object sender, RoutedEventArgs e)
         {
-            var row = SelectedRow;
-            if (row == null) return;
-            string path = row.ExePath;
-            if (string.IsNullOrWhiteSpace(path))
-                path = row.Members.Select(m => m.ExePath).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? "";
+            string path = _contextExePath;
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
                 _suppressDeactivate = true;
@@ -517,11 +551,7 @@ namespace Kil0bitSystemMonitor
 
         private void Properties_Click(object sender, RoutedEventArgs e)
         {
-            var row = SelectedRow;
-            if (row == null) return;
-            string path = row.ExePath;
-            if (string.IsNullOrWhiteSpace(path))
-                path = row.Members.Select(m => m.ExePath).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? "";
+            string path = _contextExePath;
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
                 _suppressDeactivate = true;
@@ -541,10 +571,47 @@ namespace Kil0bitSystemMonitor
             catch { _suppressDeactivate = false; }
         }
 
-        private void ContextMenu_Opened(object sender, RoutedEventArgs e) => _suppressDeactivate = true;
+        private void ContextMenu_Opened(object sender, RoutedEventArgs e)
+        {
+            _suppressDeactivate = true;
+            _contextMenuOpen = true;
+        }
+
         private void ContextMenu_Closed(object sender, RoutedEventArgs e)
         {
-            Dispatcher.BeginInvoke(() => { _suppressDeactivate = false; }, DispatcherPriority.ApplicationIdle);
+            _contextMenuOpen = false;
+            Dispatcher.BeginInvoke(() =>
+            {
+                _suppressDeactivate = false;
+                if (!_closing)
+                    RebuildRows();
+            }, DispatcherPriority.ApplicationIdle);
+        }
+
+        /// <summary>
+        /// Меню открываем сами: у ListViewItem нет ContextMenu, шаринг одного меню по Style ломает Click.
+        /// </summary>
+        private void ProcessList_PreviewMouseRightButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            _suppressDeactivate = true;
+            CaptureContext(RowFromSource(e.OriginalSource as DependencyObject));
+            if (_contextPids.Length == 0) return;
+
+            var menu = RowContextMenu;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.MousePoint;
+            menu.PlacementTarget = ProcessList;
+            menu.IsOpen = true;
+            e.Handled = true;
+        }
+
+        private static T? FindAncestor<T>(DependencyObject? current) where T : DependencyObject
+        {
+            while (current != null)
+            {
+                if (current is T match) return match;
+                current = VisualTreeHelper.GetParent(current);
+            }
+            return null;
         }
 
         private void ProcessList_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -592,24 +659,34 @@ namespace Kil0bitSystemMonitor
 
         private IntPtr OutsideClickHook(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && _ready && !_closing && !_suppressDeactivate)
+            if (nCode >= 0 && _ready && !_closing && !_suppressDeactivate && !_contextMenuOpen)
             {
                 int msg = unchecked((int)wParam.ToInt64());
-                if (msg is WM_LBUTTONDOWN or WM_RBUTTONDOWN)
+                // Только ЛКМ снаружи — ПКМ нужен для ContextMenu
+                if (msg == WM_LBUTTONDOWN)
                 {
                     var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
                     if (!IsPointOverThisWindow(info.pt.X, info.pt.Y) &&
-                        !IsPointOverOverlay(info.pt.X, info.pt.Y))
+                        !IsPointOverOverlay(info.pt.X, info.pt.Y) &&
+                        !IsPointOverPopupMenu(info.pt.X, info.pt.Y))
                     {
                         Dispatcher.BeginInvoke(() =>
                         {
-                            if (!_closing && !_suppressDeactivate)
+                            if (!_closing && !_suppressDeactivate && !_contextMenuOpen)
                                 RequestClose();
                         });
                     }
                 }
             }
             return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+        }
+
+        private static bool IsPointOverPopupMenu(int x, int y)
+        {
+            IntPtr hwnd = WindowFromPoint(new POINTAPI { X = x, Y = y });
+            if (hwnd == IntPtr.Zero) return false;
+            var sb = new System.Text.StringBuilder(64);
+            return GetClassName(hwnd, sb, sb.Capacity) > 0 && sb.ToString() == "#32768";
         }
 
         private bool IsCursorOverOverlay()
@@ -726,6 +803,12 @@ namespace Kil0bitSystemMonitor
 
         [DllImport("user32.dll")]
         private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr WindowFromPoint(POINTAPI pt);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
 
         [DllImport("user32.dll")]
         private static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
