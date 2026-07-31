@@ -23,10 +23,11 @@ namespace Kil0bitSystemMonitor
     {
         private readonly ConfigService _config;
         private readonly ProcessListService _service = new();
-        private readonly ObservableCollection<ProcessInfoItem> _items = new();
+        private readonly Dictionary<int, ProcessInfoItem> _processes = new();
+        private readonly ObservableCollection<ProcessListRow> _rows = new();
+        private readonly HashSet<string> _expandedGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly DispatcherTimer _timer;
         private readonly IntPtr _ownerOverlay;
-        private ICollectionView? _view;
         private bool _closing;
         private bool _suppressDeactivate;
         private bool _ready;
@@ -49,9 +50,7 @@ namespace Kil0bitSystemMonitor
             _sortColumn = NormalizeSort(_config.Config.ProcessListSortColumn);
             _sortAscending = _config.Config.ProcessListSortAscending;
 
-            ProcessList.ItemsSource = _items;
-            _view = CollectionViewSource.GetDefaultView(_items);
-            ApplySort();
+            ProcessList.ItemsSource = _rows;
             ApplyLanguage();
             ApplyIconsVisibility();
 
@@ -116,12 +115,12 @@ namespace Kil0bitSystemMonitor
             CloseBtn.ToolTip = L["Processes.Close"];
             OpenTaskMgrBtnText.Text = L["Processes.OpenTaskManager"];
             OpenTaskMgrBtn.ToolTip = L["Processes.OpenTaskManager"];
-            StatusText.Text = L.Format("Processes.Count", _items.Count);
+            StatusText.Text = L.Format("Processes.Count", _processes.Count);
             MenuEndTask.Header = L["Processes.Menu.EndTask"];
             MenuOpenLocation.Header = L["Processes.Menu.OpenLocation"];
             MenuProperties.Header = L["Processes.Menu.Properties"];
             UpdateHeaderHints();
-            _view?.Refresh();
+            RebuildRows();
         }
 
         private async Task RefreshSnapshotAsync(bool prime = false)
@@ -138,22 +137,15 @@ namespace Kil0bitSystemMonitor
 
                 var byPid = snapshot.ToDictionary(p => p.Pid);
 
-                for (int i = _items.Count - 1; i >= 0; i--)
+                foreach (var pid in _processes.Keys.ToList())
                 {
-                    if (!byPid.ContainsKey(_items[i].Pid))
-                        _items.RemoveAt(i);
+                    if (!byPid.ContainsKey(pid))
+                        _processes.Remove(pid);
                 }
 
                 foreach (var src in snapshot)
                 {
-                    var existing = _items.FirstOrDefault(x => x.Pid == src.Pid);
-                    if (existing == null)
-                    {
-                        if (_config.Config.ProcessListShowIcons)
-                            src.EnsureIcon();
-                        _items.Add(src);
-                    }
-                    else
+                    if (_processes.TryGetValue(src.Pid, out var existing))
                     {
                         existing.Name = src.Name;
                         existing.CpuPercent = src.CpuPercent;
@@ -166,13 +158,99 @@ namespace Kil0bitSystemMonitor
                         if (_config.Config.ProcessListShowIcons)
                             existing.EnsureIcon();
                     }
+                    else
+                    {
+                        if (_config.Config.ProcessListShowIcons)
+                            src.EnsureIcon();
+                        _processes[src.Pid] = src;
+                    }
                 }
 
-                StatusText.Text = LocalizationService.Instance.Format("Processes.Count", _items.Count);
-                _view?.Refresh();
+                // Убрать expand для исчезнувших групп
+                var liveNames = new HashSet<string>(
+                    _processes.Values.Select(p => p.Name),
+                    StringComparer.OrdinalIgnoreCase);
+                _expandedGroups.RemoveWhere(k => !liveNames.Contains(k));
+
+                StatusText.Text = LocalizationService.Instance.Format("Processes.Count", _processes.Count);
+                RebuildRows();
             }
             catch { }
             finally { _refreshInFlight = false; }
+        }
+
+        private void RebuildRows()
+        {
+            var groups = _processes.Values
+                .GroupBy(p => p.Name, StringComparer.OrdinalIgnoreCase)
+                .Select(g => (Name: g.First().Name, Items: g.ToList()))
+                .ToList();
+
+            groups = SortGroups(groups);
+
+            var next = new List<ProcessListRow>(groups.Count + 16);
+            foreach (var g in groups)
+            {
+                if (g.Items.Count == 1)
+                {
+                    next.Add(ProcessListRow.FromSingle(g.Items[0]));
+                    continue;
+                }
+
+                bool expanded = _expandedGroups.Contains(g.Name);
+                next.Add(ProcessListRow.FromGroup(g.Name, g.Items, expanded));
+                if (!expanded) continue;
+
+                foreach (var child in SortProcesses(g.Items))
+                    next.Add(ProcessListRow.FromChild(child));
+            }
+
+            _rows.Clear();
+            foreach (var row in next)
+                _rows.Add(row);
+        }
+
+        private List<(string Name, List<ProcessInfoItem> Items)> SortGroups(
+            List<(string Name, List<ProcessInfoItem> Items)> groups)
+        {
+            float Metric(List<ProcessInfoItem> items) => _sortColumn switch
+            {
+                ProcessListSortColumns.Cpu => items.Sum(i => i.CpuPercent),
+                ProcessListSortColumns.Memory => items.Sum(i => i.MemoryMb),
+                ProcessListSortColumns.Disk => items.Sum(i => i.DiskPercent),
+                ProcessListSortColumns.Network => items.Sum(i => i.NetworkKbps),
+                _ => 0
+            };
+
+            if (_sortColumn == ProcessListSortColumns.Name)
+            {
+                return _sortAscending
+                    ? groups.OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList()
+                    : groups.OrderByDescending(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
+            }
+
+            return _sortAscending
+                ? groups.OrderBy(g => Metric(g.Items)).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList()
+                : groups.OrderByDescending(g => Metric(g.Items)).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private List<ProcessInfoItem> SortProcesses(List<ProcessInfoItem> items)
+        {
+            IOrderedEnumerable<ProcessInfoItem> ordered = _sortColumn switch
+            {
+                ProcessListSortColumns.Cpu => _sortAscending
+                    ? items.OrderBy(i => i.CpuPercent) : items.OrderByDescending(i => i.CpuPercent),
+                ProcessListSortColumns.Memory => _sortAscending
+                    ? items.OrderBy(i => i.MemoryMb) : items.OrderByDescending(i => i.MemoryMb),
+                ProcessListSortColumns.Disk => _sortAscending
+                    ? items.OrderBy(i => i.DiskPercent) : items.OrderByDescending(i => i.DiskPercent),
+                ProcessListSortColumns.Network => _sortAscending
+                    ? items.OrderBy(i => i.NetworkKbps) : items.OrderByDescending(i => i.NetworkKbps),
+                _ => _sortAscending
+                    ? items.OrderBy(i => i.Name, StringComparer.OrdinalIgnoreCase)
+                    : items.OrderByDescending(i => i.Name, StringComparer.OrdinalIgnoreCase)
+            };
+            return ordered.ThenBy(i => i.Pid).ToList();
         }
 
         private void ApplyIconsVisibility()
@@ -182,8 +260,21 @@ namespace Kil0bitSystemMonitor
 
         private void EnsureIconsForVisibleItems()
         {
-            foreach (var item in _items)
+            foreach (var item in _processes.Values)
                 item.EnsureIcon();
+            RebuildRows();
+        }
+
+        private void Expand_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not FrameworkElement fe || fe.DataContext is not ProcessListRow row || !row.IsExpandable)
+                return;
+
+            if (!_expandedGroups.Add(row.GroupKey))
+                _expandedGroups.Remove(row.GroupKey);
+
+            RebuildRows();
+            e.Handled = true;
         }
 
         /// <summary>
@@ -301,22 +392,7 @@ namespace Kil0bitSystemMonitor
 
         private void ApplySort()
         {
-            if (_view == null) return;
-            _view.SortDescriptions.Clear();
-
-            string prop = _sortColumn switch
-            {
-                ProcessListSortColumns.Cpu => nameof(ProcessInfoItem.CpuPercent),
-                ProcessListSortColumns.Memory => nameof(ProcessInfoItem.MemoryMb),
-                ProcessListSortColumns.Disk => nameof(ProcessInfoItem.DiskPercent),
-                ProcessListSortColumns.Network => nameof(ProcessInfoItem.NetworkKbps),
-                _ => nameof(ProcessInfoItem.Name)
-            };
-
-            var dir = _sortAscending ? ListSortDirection.Ascending : ListSortDirection.Descending;
-            _view.SortDescriptions.Add(new SortDescription(prop, dir));
-            if (prop != nameof(ProcessInfoItem.Name))
-                _view.SortDescriptions.Add(new SortDescription(nameof(ProcessInfoItem.Name), ListSortDirection.Ascending));
+            RebuildRows();
         }
 
         private void PersistSort()
@@ -367,7 +443,7 @@ namespace Kil0bitSystemMonitor
             UpdateHeaderHints();
         }
 
-        private ProcessInfoItem? SelectedItem => ProcessList.SelectedItem as ProcessInfoItem;
+        private ProcessListRow? SelectedRow => ProcessList.SelectedItem as ProcessListRow;
 
         private void CloseBtn_Click(object sender, RoutedEventArgs e) => RequestClose();
 
@@ -390,30 +466,38 @@ namespace Kil0bitSystemMonitor
 
         private void EndTask_Click(object sender, RoutedEventArgs e)
         {
-            var item = SelectedItem;
-            if (item == null) return;
-            try
+            var row = SelectedRow;
+            if (row == null) return;
+
+            var targets = row.IsGroup ? row.Members : row.Members;
+            foreach (var item in targets.ToList())
             {
-                var p = Process.GetProcessById(item.Pid);
-                p.Kill(entireProcessTree: false);
-                p.Dispose();
-            }
-            catch (Exception ex)
-            {
-                _suppressDeactivate = true;
-                WpfMessageBox.Show(this,
-                    LocalizationService.Instance.Format("Processes.Msg.EndTaskFail", ex.Message),
-                    LocalizationService.Instance["Processes.Title"],
-                    MessageBoxButton.OK, MessageBoxImage.Warning);
-                _suppressDeactivate = false;
+                try
+                {
+                    var p = Process.GetProcessById(item.Pid);
+                    p.Kill(entireProcessTree: false);
+                    p.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    _suppressDeactivate = true;
+                    WpfMessageBox.Show(this,
+                        LocalizationService.Instance.Format("Processes.Msg.EndTaskFail", ex.Message),
+                        LocalizationService.Instance["Processes.Title"],
+                        MessageBoxButton.OK, MessageBoxImage.Warning);
+                    _suppressDeactivate = false;
+                    break;
+                }
             }
         }
 
         private void OpenLocation_Click(object sender, RoutedEventArgs e)
         {
-            var item = SelectedItem;
-            if (item == null) return;
-            string path = item.ExePath;
+            var row = SelectedRow;
+            if (row == null) return;
+            string path = row.ExePath;
+            if (string.IsNullOrWhiteSpace(path))
+                path = row.Members.Select(m => m.ExePath).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? "";
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
                 _suppressDeactivate = true;
@@ -433,9 +517,11 @@ namespace Kil0bitSystemMonitor
 
         private void Properties_Click(object sender, RoutedEventArgs e)
         {
-            var item = SelectedItem;
-            if (item == null) return;
-            string path = item.ExePath;
+            var row = SelectedRow;
+            if (row == null) return;
+            string path = row.ExePath;
+            if (string.IsNullOrWhiteSpace(path))
+                path = row.Members.Select(m => m.ExePath).FirstOrDefault(p => !string.IsNullOrWhiteSpace(p)) ?? "";
             if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
             {
                 _suppressDeactivate = true;

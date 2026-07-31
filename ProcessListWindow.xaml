@@ -93,7 +93,28 @@
                                 </DataTemplate>
                             </GridViewColumn.CellTemplate>
                         </GridViewColumn>
-                        <GridViewColumn x:Name="ColName" Width="180" DisplayMemberBinding="{Binding Name}"/>
+                        <GridViewColumn x:Name="ColName" Width="200">
+                            <GridViewColumn.CellTemplate>
+                                <DataTemplate>
+                                    <DockPanel LastChildFill="True">
+                                        <Button DockPanel.Dock="Left"
+                                                Width="18" Height="18" Padding="0" Margin="0,0,2,0"
+                                                Background="Transparent" BorderThickness="0"
+                                                Cursor="Hand" Focusable="False"
+                                                Visibility="{Binding ExpanderVisibility}"
+                                                Click="Expand_Click"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding ExpanderGlyph}" FontSize="9"
+                                                       Foreground="#AAFFFFFF" HorizontalAlignment="Center"/>
+                                        </Button>
+                                        <TextBlock Text="{Binding DisplayName}"
+                                                   Padding="{Binding NamePadding}"
+                                                   VerticalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"/>
+                                    </DockPanel>
+                                </DataTemplate>
+                            </GridViewColumn.CellTemplate>
+                        </GridViewColumn>
                         <GridViewColumn x:Name="ColCpu" Width="70" DisplayMemberBinding="{Binding CpuText}"/>
                         <GridViewColumn x:Name="ColMemory" Width="140" DisplayMemberBinding="{Binding MemoryText}"/>
                         <GridViewColumn x:Name="ColDisk" Width="70" DisplayMemberBinding="{Binding DiskText}"/>
