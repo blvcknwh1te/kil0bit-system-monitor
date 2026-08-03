@@ -35,6 +35,24 @@ namespace Kil0bitSystemMonitor
         {
             base.OnStartup(e);
 
+            // Оверлей — не WPF-окно; закрытие Settings/popup не должно гасить процесс.
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+            DispatcherUnhandledException += (_, args) =>
+            {
+                Kil0bitSystemMonitor.Services.DebugLogger.Error("App.Dispatcher", args.Exception.ToString());
+                args.Handled = true;
+            };
+            AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            {
+                Kil0bitSystemMonitor.Services.DebugLogger.Error("App.Unhandled", args.ExceptionObject?.ToString() ?? "unknown");
+            };
+            System.Threading.Tasks.TaskScheduler.UnobservedTaskException += (_, args) =>
+            {
+                Kil0bitSystemMonitor.Services.DebugLogger.Error("App.Task", args.Exception.ToString());
+                args.SetObserved();
+            };
+
             // Robust single-instance check using Mutex
             bool createdNew;
             s_mutex = new System.Threading.Mutex(true, "Local\\Kil0bitSystemMonitor_SingleInstance_Mutex", out createdNew);
@@ -56,7 +74,8 @@ namespace Kil0bitSystemMonitor
             
             var config = new Kil0bitSystemMonitor.Services.ConfigService();
             Kil0bitSystemMonitor.Services.LocalizationService.Instance.Initialize(config.Config.Language);
-            
+            Kil0bitSystemMonitor.Services.DebugLogger.Info("App", $"Start pid={Environment.ProcessId} args={string.Join(' ', Environment.GetCommandLineArgs())}");
+
             m_dummyWindow = new Window();
             m_dummyWindow.Title = "Kil0bit System Monitor Host";
             m_dummyWindow.Width = 0;
@@ -108,6 +127,7 @@ namespace Kil0bitSystemMonitor
         {
             try
             {
+                Kil0bitSystemMonitor.Services.DebugLogger.Info("App", $"OnExit code={e.ApplicationExitCode}");
                 m_overlay?.Dispose();
                 m_telemetry?.Dispose();
                 m_dummyWindow?.Close();
@@ -120,6 +140,7 @@ namespace Kil0bitSystemMonitor
 
         public static void Quit()
         {
+            Kil0bitSystemMonitor.Services.DebugLogger.Info("App", "Quit requested");
             Current.Shutdown();
         }
     }

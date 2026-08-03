@@ -76,7 +76,6 @@ namespace Kil0bitSystemMonitor.Helpers
 
         public const int GWL_EXSTYLE = -20;
         public const int GWL_STYLE = -16;
-        public const int GWL_HWNDPARENT = -8;
 
         public const long WS_EX_TOOLWINDOW = 0x00000080L;
         public const long WS_EX_TOPMOST = 0x00000008L;

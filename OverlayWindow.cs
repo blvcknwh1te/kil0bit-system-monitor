@@ -28,6 +28,8 @@ namespace Kil0bitSystemMonitor
         private bool _trackingMouse = false;
         private bool _shellFullscreen = false;
         private bool _appbarRegistered = false;
+        private bool _disposing = false;
+        private bool _recreatingHwnd = false;
         private readonly Action<SystemMetrics>? _onMetricsUpdated;
         private readonly System.ComponentModel.PropertyChangedEventHandler? _onConfigPropertyChanged;
         private uint _currentDpi = 96;
@@ -50,7 +52,7 @@ namespace Kil0bitSystemMonitor
         private double _dragTargetY;
         private long _dragAnimTick;
         private System.Windows.Threading.DispatcherTimer? _dragAnimTimer;
-        private const double DragEaseSeconds = 0.2;
+        private const double DragEaseSeconds = 0.13;
         private const double DragEaseTau = DragEaseSeconds / 3.0;
         private ProcessListWindow? _processListWindow;
 
@@ -163,15 +165,10 @@ namespace Kil0bitSystemMonitor
                 int disableTransitions = 1;
                 Win32Helper.DwmSetWindowAttribute(_hWnd, 3, ref disableTransitions, sizeof(int));
 
-                // Snapping setup (Only attach parent handle if snapping is enabled at launch)
                 if (_config.Config.StickToTaskbar)
-                {
                     AttachToTaskbar();
-                }
                 else
-                {
                     AlignToTaskbarCenter();
-                }
                 ShowWindow(_hWnd, 5);
                 UpdateCachedColors();
                 UpdateLayer();
@@ -179,9 +176,16 @@ namespace Kil0bitSystemMonitor
 
                 _onMetricsUpdated = (m) => {
                     _dispatcher.BeginInvoke(() => {
-                        _viewModel.Metrics = m;
-                        // Only re-render if visible or transitioning
-                        if (_targetAlpha > 0 || _currentAlpha > 0) UpdateLayer();
+                        try
+                        {
+                            if (!EnsureOverlayHwndAlive()) return;
+                            _viewModel.Metrics = m;
+                            if (_targetAlpha > 0 || _currentAlpha > 0) UpdateLayer();
+                        }
+                        catch (Exception ex)
+                        {
+                            DebugLogger.Error("Overlay.Metrics", ex.ToString());
+                        }
                     });
                 };
                 _telemetry.MetricsUpdated += _onMetricsUpdated;
@@ -189,6 +193,7 @@ namespace Kil0bitSystemMonitor
 
                 _onConfigPropertyChanged = (s, e) => {
                     _dispatcher.BeginInvoke(() => {
+                        if (!EnsureOverlayHwndAlive()) return;
                         if (e.PropertyName == nameof(_config.Config.AccentColorHex) || e.PropertyName == nameof(_config.Config.LabelColorHex) || e.PropertyName == nameof(_config.Config.BackgroundColorHex) || e.PropertyName == nameof(_config.Config.PodColorHex) || e.PropertyName == nameof(_config.Config.FontFamily)
                             || e.PropertyName == nameof(_config.Config.NetLabelColorHex) || e.PropertyName == nameof(_config.Config.CpuRamLabelColorHex) || e.PropertyName == nameof(_config.Config.GpuLabelColorHex) || e.PropertyName == nameof(_config.Config.DiskLabelColorHex)
                             || e.PropertyName == nameof(_config.Config.NetAccentColorHex) || e.PropertyName == nameof(_config.Config.CpuRamAccentColorHex) || e.PropertyName == nameof(_config.Config.GpuAccentColorHex) || e.PropertyName == nameof(_config.Config.DiskAccentColorHex))
@@ -198,15 +203,13 @@ namespace Kil0bitSystemMonitor
                         }
                         if (e.PropertyName == nameof(_config.Config.StickToTaskbar))
                         {
-                            // Snapping toggle handled dynamically to clear/restore HWND parent
                             if (_config.Config.StickToTaskbar)
                             {
                                 AttachToTaskbar();
                             }
                             else
                             {
-                                // Remove taskbar owner so it floats freely
-                                Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, IntPtr.Zero);
+                                _attachedTaskbar = IntPtr.Zero;
                                 UnregisterAppBar();
                                 AlignToTaskbarCenter();
                             }
@@ -214,7 +217,6 @@ namespace Kil0bitSystemMonitor
                         if (e.PropertyName == nameof(_config.Config.ShowOverlay) || e.PropertyName == nameof(_config.Config.HideOnFullscreen) || e.PropertyName == nameof(_config.Config.StickToTaskbar) || e.PropertyName == nameof(_config.Config.ShowPods) || e.PropertyName == nameof(_config.Config.ShowBackground) || e.PropertyName == nameof(_config.Config.AlwaysOnTop))
                         {
                             UpdateVisibility();
-                            // One-time Z-order update for smooth transition
                             IntPtr zOrder = _config.Config.AlwaysOnTop ? Win32Helper.HWND_TOPMOST : Win32Helper.HWND_NOTOPMOST;
                             SetWindowPos(_hWnd, zOrder, 0, 0, 0, 0, Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0040);
                         }
@@ -231,6 +233,9 @@ namespace Kil0bitSystemMonitor
         {
             _dispatcher.BeginInvoke(() =>
             {
+                if (_disposing) return;
+                if (!EnsureOverlayHwndAlive()) return;
+
                 bool show = ShouldShowOverlay();
 
                 if (show)
@@ -249,10 +254,11 @@ namespace Kil0bitSystemMonitor
                     if (!_hideDebounceTimer.IsEnabled && _targetAlpha != 0) _hideDebounceTimer.Start();
                 }
 
+                if (!_overlayVisible) return;
+
                 // Enforce TOPMOST Z-order only if the taskbar is not the foreground active window.
                 // Re-asserting TOPMOST while the taskbar is active and managing its Z-order causes blinking.
-                // However, we must enforce it when other windows (like Task View) are active to keep the overlay visible.
-                if (_overlayVisible && _config.Config.AlwaysOnTop)
+                if (_config.Config.AlwaysOnTop)
                 {
                     IntPtr fg = GetForegroundWindow();
                     StringBuilder sb = new StringBuilder(256);
@@ -261,7 +267,6 @@ namespace Kil0bitSystemMonitor
 
                     if (fgClass != "Shell_TrayWnd" && fgClass != "Shell_SecondaryTrayWnd")
                     {
-                        // Smart check: Only re-assert TOPMOST if we are NOT already the top-most window.
                         IntPtr prev = GetWindow(_hWnd, GW_HWNDPREV);
                         if (prev != IntPtr.Zero)
                         {
@@ -269,7 +274,97 @@ namespace Kil0bitSystemMonitor
                         }
                     }
                 }
+                else if (_config.Config.StickToTaskbar)
+                {
+                    // Без GWL_HWNDPARENT: держим оверлей сразу над таскбаром через Z-order.
+                    IntPtr taskbar = _attachedTaskbar;
+                    if (taskbar == IntPtr.Zero || !IsWindow(taskbar))
+                    {
+                        if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur))
+                            taskbar = ResolveTaskbarForPoint(cur.Left + cur.Width / 2, cur.Top + cur.Height / 2);
+                    }
+                    if (taskbar != IntPtr.Zero && IsWindow(taskbar))
+                    {
+                        IntPtr above = GetWindow(taskbar, GW_HWNDPREV);
+                        if (above != IntPtr.Zero && above != _hWnd)
+                            SetWindowPos(_hWnd, above, 0, 0, 0, 0, Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0040);
+                    }
+                }
             });
+        }
+
+        /// <summary>
+        /// HWND оверлея не владеет таскбаром: если shell всё же уничтожил окно — пересоздаём.
+        /// </summary>
+        private bool EnsureOverlayHwndAlive()
+        {
+            if (_disposing) return false;
+            if (_hWnd != IntPtr.Zero && IsWindow(_hWnd)) return true;
+            if (_recreatingHwnd) return false;
+
+            _recreatingHwnd = true;
+            try
+            {
+                DebugLogger.Warn("Overlay", $"HWND lost (was 0x{_hWnd.ToInt64():X}), recreating");
+                _hWnd = IntPtr.Zero;
+                _attachedTaskbar = IntPtr.Zero;
+                _appbarRegistered = false;
+                _shellHookRegistered = false;
+                _overlayVisible = false;
+
+                int x = (int)_config.Config.X;
+                int y = (int)_config.Config.Y;
+                if (x < -10000 || x > 10000 || y < -10000 || y > 10000) { x = 100; y = 100; }
+
+                IntPtr hInstance = GetModuleHandle(null);
+                _hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "Kil0bitOverlayWndClass_Main", "Kil0bit System Monitor Overlay", WS_POPUP, x, y, 300, 32, IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero);
+                if (_hWnd == IntPtr.Zero)
+                {
+                    DebugLogger.Error("Overlay", "Failed to recreate overlay HWND");
+                    return false;
+                }
+
+                if (_hIcon != IntPtr.Zero)
+                {
+                    SendMessage(_hWnd, WM_SETICON, (IntPtr)ICON_BIG, _hIcon);
+                    SendMessage(_hWnd, WM_SETICON, (IntPtr)ICON_SMALL, _hIcon);
+                }
+
+                _currentDpi = GetDpiForWindow(_hWnd);
+                if (_currentDpi == 0) _currentDpi = 96;
+                _dpiScale = _currentDpi / 96.0f;
+
+                int disableTransitions = 1;
+                Win32Helper.DwmSetWindowAttribute(_hWnd, 3, ref disableTransitions, sizeof(int));
+
+                if (_config.Config.StickToTaskbar)
+                    AttachToTaskbar();
+                else
+                    AlignToTaskbarCenter();
+
+                RegisterShellHook();
+                _currentAlpha = 0;
+                _targetAlpha = _config.Config.ShowOverlay ? (byte)255 : (byte)0;
+                if (_targetAlpha == 255)
+                {
+                    ShowWindow(_hWnd, 5);
+                    _overlayVisible = true;
+                    _currentAlpha = 255;
+                    UpdateLayer();
+                }
+
+                DebugLogger.Info("Overlay", $"HWND recreated 0x{_hWnd.ToInt64():X}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.Error("Overlay", $"Recreate failed: {ex}");
+                return false;
+            }
+            finally
+            {
+                _recreatingHwnd = false;
+            }
         }
 
         private void RegisterAppBar() { if (_appbarRegistered || _hWnd == IntPtr.Zero) return; APPBARDATA abd = new APPBARDATA { cbSize = Marshal.SizeOf(typeof(APPBARDATA)), hWnd = _hWnd, uCallbackMessage = WM_APPBAR_CALLBACK }; SHAppBarMessage(ABM_NEW, ref abd); _appbarRegistered = true; }
@@ -449,7 +544,6 @@ namespace Kil0bitSystemMonitor
 
         private const int HSHELL_WINDOWCREATED = 1;
         private const int HSHELL_WINDOWDESTROYED = 2;
-        private const int HSHELL_REDRAW = 6;
         private const int HSHELL_WINDOWREPLACED = 13;
         private const int HSHELL_WINDOWREPLACING = 14;
         private const uint MONITOR_DEFAULTTONULL = 0;
@@ -622,8 +716,9 @@ namespace Kil0bitSystemMonitor
 
         private void EnsureAttachedToTaskbar(IntPtr taskbar)
         {
+            // Не ставим GWL_HWNDPARENT на Shell_TrayWnd: при пересоздании explorer/secondary tray
+            // Windows уничтожает owned-окна — оверлей «сам закрывается».
             if (taskbar == IntPtr.Zero || taskbar == _attachedTaskbar) return;
-            Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, taskbar);
             _attachedTaskbar = taskbar;
         }
 
@@ -705,7 +800,8 @@ namespace Kil0bitSystemMonitor
         private void OnShellHook(IntPtr wParam)
         {
             int code = unchecked((int)(wParam.ToInt64() & 0x7FFF));
-            if (code is HSHELL_WINDOWCREATED or HSHELL_WINDOWDESTROYED or HSHELL_REDRAW
+            // Без HSHELL_REDRAW: иначе Refresh+UIA на каждый redraw любого окна.
+            if (code is HSHELL_WINDOWCREATED or HSHELL_WINDOWDESTROYED
                 or HSHELL_WINDOWREPLACED or HSHELL_WINDOWREPLACING)
                 ScheduleTaskbarBoundsRefresh();
         }
@@ -715,7 +811,7 @@ namespace Kil0bitSystemMonitor
             int gen = System.Threading.Interlocked.Increment(ref _taskbarBoundsRefreshGen);
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
             {
-                System.Threading.Thread.Sleep(120);
+                System.Threading.Thread.Sleep(250);
                 if (gen != _taskbarBoundsRefreshGen) return;
                 RefreshTaskbarBounds();
             });
@@ -750,7 +846,11 @@ namespace Kil0bitSystemMonitor
                     : tb.Left + (int)(48 * _dpiScale);
             }
 
-            _taskbarBounds[(nint)taskbar] = (iconRight, trayLeft);
+            nint key = (nint)taskbar;
+            if (_taskbarBounds.TryGetValue(key, out var prev) && prev.IconRight == iconRight && prev.TrayLeft == trayLeft)
+                return;
+
+            _taskbarBounds[key] = (iconRight, trayLeft);
 
             if (DebugLogger.IsEnabled)
                 DebugLogger.Info("Taskbar.Bounds", $"hwnd=0x{taskbar.ToInt64():X} iconRight={iconRight} trayLeft={trayLeft}");
@@ -1231,12 +1331,13 @@ namespace Kil0bitSystemMonitor
         {
             try
             {
+                _disposing = true;
                 _dispatcher.BeginInvoke(() =>
                 {
                     try { _processListWindow?.Close(); } catch { }
                     _processListWindow = null;
                 });
-                _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); _dragAnimTimer?.Stop(); UnregisterShellHook(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);
+                _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); _dragAnimTimer?.Stop(); UnregisterShellHook(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); _hWnd = IntPtr.Zero; if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);
             }
             catch { }
         }
@@ -1246,6 +1347,20 @@ namespace Kil0bitSystemMonitor
             if (_wmShellHook != 0 && msg == _wmShellHook)
             {
                 OnShellHook(wParam);
+                return IntPtr.Zero;
+            }
+            if (msg == 0x0002) // WM_DESTROY
+            {
+                if (!_disposing && hWnd == _hWnd)
+                {
+                    DebugLogger.Warn("Overlay", "WM_DESTROY received");
+                    _hWnd = IntPtr.Zero;
+                    _attachedTaskbar = IntPtr.Zero;
+                    _appbarRegistered = false;
+                    _shellHookRegistered = false;
+                    _overlayVisible = false;
+                    _dispatcher.BeginInvoke(() => EnsureOverlayHwndAlive());
+                }
                 return IntPtr.Zero;
             }
             if (msg == 0x0084) return (IntPtr)1;
@@ -1529,6 +1644,7 @@ namespace Kil0bitSystemMonitor
         [DllImport("user32.dll")] static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
         [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint f);
         [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
+        [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
         [StructLayout(LayoutKind.Sequential)] struct TRACKMOUSEEVENT { public uint cbSize; public uint dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
         [DllImport("user32.dll")] static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT e);
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreatePopupMenu();
