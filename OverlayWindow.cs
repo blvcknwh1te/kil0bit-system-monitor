@@ -43,7 +43,7 @@ namespace Kil0bitSystemMonitor
         private long _lastDragEndTick;
         private const int DragThresholdPx = 8;
         private const int PostDragClickGuardMs = 120;
-        // Свой drag + ease ~0.2s (вместо HTCAPTION)
+        // Свой drag + ease ~0.Xs (вместо HTCAPTION)
         private int _dragOffsetX;
         private int _dragOffsetY;
         private double _dragPosX;
@@ -255,42 +255,100 @@ namespace Kil0bitSystemMonitor
                 }
 
                 if (!_overlayVisible) return;
-
-                // Enforce TOPMOST Z-order only if the taskbar is not the foreground active window.
-                // Re-asserting TOPMOST while the taskbar is active and managing its Z-order causes blinking.
-                if (_config.Config.AlwaysOnTop)
-                {
-                    IntPtr fg = GetForegroundWindow();
-                    StringBuilder sb = new StringBuilder(256);
-                    Win32Helper.GetClassName(fg, sb, sb.Capacity);
-                    string fgClass = sb.ToString();
-
-                    if (fgClass != "Shell_TrayWnd" && fgClass != "Shell_SecondaryTrayWnd")
-                    {
-                        IntPtr prev = GetWindow(_hWnd, GW_HWNDPREV);
-                        if (prev != IntPtr.Zero)
-                        {
-                            SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0, Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0040);
-                        }
-                    }
-                }
-                else if (_config.Config.StickToTaskbar)
-                {
-                    // Без GWL_HWNDPARENT: держим оверлей сразу над таскбаром через Z-order.
-                    IntPtr taskbar = _attachedTaskbar;
-                    if (taskbar == IntPtr.Zero || !IsWindow(taskbar))
-                    {
-                        if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur))
-                            taskbar = ResolveTaskbarForPoint(cur.Left + cur.Width / 2, cur.Top + cur.Height / 2);
-                    }
-                    if (taskbar != IntPtr.Zero && IsWindow(taskbar))
-                    {
-                        IntPtr above = GetWindow(taskbar, GW_HWNDPREV);
-                        if (above != IntPtr.Zero && above != _hWnd)
-                            SetWindowPos(_hWnd, above, 0, 0, 0, 0, Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0040);
-                    }
-                }
+                ReassertZOrder();
             });
+        }
+
+        /// <summary>
+        /// При клике по таскбару shell поднимает его над TOPMOST — HWND_TOPMOST в ответ даёт мигание.
+        /// Ставим оверлей сразу над таскбаром в той же topmost-ленте.
+        /// </summary>
+        private void ReassertZOrder()
+        {
+            if (_disposing || !_overlayVisible || _hWnd == IntPtr.Zero || !IsWindow(_hWnd))
+                return;
+
+            IntPtr fg = GetForegroundWindow();
+            var sb = new StringBuilder(256);
+            Win32Helper.GetClassName(fg, sb, sb.Capacity);
+            string fgClass = sb.ToString();
+            bool taskbarFg = fgClass is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+
+            if (_config.Config.AlwaysOnTop)
+            {
+                long ex = Win32Helper.GetWindowLong(_hWnd, Win32Helper.GWL_EXSTYLE);
+                bool isTopMost = (ex & Win32Helper.WS_EX_TOPMOST) != 0;
+                IntPtr prev = GetWindow(_hWnd, GW_HWNDPREV);
+                bool coveredByTaskbar = false;
+                IntPtr coveringTaskbar = IntPtr.Zero;
+                if (prev != IntPtr.Zero)
+                {
+                    sb.Clear();
+                    Win32Helper.GetClassName(prev, sb, sb.Capacity);
+                    string prevClass = sb.ToString();
+                    if (prevClass is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
+                    {
+                        coveredByTaskbar = true;
+                        coveringTaskbar = prev;
+                    }
+                }
+
+                // Не HWND_TOPMOST при конфликте с таскбаром — только вставка над ним.
+                if (taskbarFg || coveredByTaskbar)
+                {
+                    if (!isTopMost)
+                    {
+                        SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0,
+                            Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+                    }
+                    IntPtr taskbar = taskbarFg ? fg : coveringTaskbar;
+                    if (taskbar == IntPtr.Zero || !IsWindow(taskbar))
+                        taskbar = coveringTaskbar != IntPtr.Zero ? coveringTaskbar : fg;
+                    KeepAboveTaskbar(taskbar);
+                    return;
+                }
+
+                if (!isTopMost)
+                {
+                    SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0,
+                        Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+                }
+                return;
+            }
+
+            if (!_config.Config.StickToTaskbar) return;
+
+            IntPtr stickBar = _attachedTaskbar;
+            if (taskbarFg)
+                stickBar = fg;
+
+            if (stickBar == IntPtr.Zero || !IsWindow(stickBar))
+            {
+                if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur))
+                    stickBar = ResolveTaskbarForPoint(cur.Left + cur.Width / 2, cur.Top + cur.Height / 2);
+            }
+            if (stickBar != IntPtr.Zero && IsWindow(stickBar))
+                KeepAboveTaskbar(stickBar);
+        }
+
+        /// <summary>
+        /// Ставит оверлей сразу над указанным таскбаром в Z-order (режим без AlwaysOnTop).
+        /// </summary>
+        private void KeepAboveTaskbar(IntPtr taskbar)
+        {
+            if (taskbar == IntPtr.Zero || !IsWindow(taskbar)) return;
+            IntPtr above = GetWindow(taskbar, GW_HWNDPREV);
+            if (above == _hWnd) return;
+            if (above != IntPtr.Zero)
+            {
+                SetWindowPos(_hWnd, above, 0, 0, 0, 0,
+                    Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+            }
+            else
+            {
+                SetWindowPos(_hWnd, IntPtr.Zero, 0, 0, 0, 0,
+                    Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+            }
         }
 
         /// <summary>
@@ -544,6 +602,7 @@ namespace Kil0bitSystemMonitor
 
         private const int HSHELL_WINDOWCREATED = 1;
         private const int HSHELL_WINDOWDESTROYED = 2;
+        private const int HSHELL_WINDOWACTIVATED = 4;
         private const int HSHELL_WINDOWREPLACED = 13;
         private const int HSHELL_WINDOWREPLACING = 14;
         private const uint MONITOR_DEFAULTTONULL = 0;
@@ -804,6 +863,10 @@ namespace Kil0bitSystemMonitor
             if (code is HSHELL_WINDOWCREATED or HSHELL_WINDOWDESTROYED
                 or HSHELL_WINDOWREPLACED or HSHELL_WINDOWREPLACING)
                 ScheduleTaskbarBoundsRefresh();
+
+            // Сразу после активации таскбара — до тика 500ms EnforceZOrder.
+            if (code == HSHELL_WINDOWACTIVATED && _overlayVisible)
+                _dispatcher.BeginInvoke(ReassertZOrder);
         }
 
         private void ScheduleTaskbarBoundsRefresh()
@@ -1176,6 +1239,7 @@ namespace Kil0bitSystemMonitor
                                     : dskVBrush;
 
                 float contentX = cx + pad;
+                float contentW = Math.Max(0, widths[i] - pad * 2);
                 // Fix: calculate y positions so both text rows are fully contained within h
                 float lineH = font.Height;
                 float totalTextH = lineH * 2 + (2 * scale);
@@ -1184,8 +1248,12 @@ namespace Kil0bitSystemMonitor
 
                 Action<MetricItem, float> drawItem = (item, y) => {
                     float lw = GetCachedMeasure(item.Label, font);
-                    _offscreenGraphics.DrawString(item.Label, font, sectionLBrush, contentX, y);
-                    _offscreenGraphics.DrawString(item.Value, font, sectionVBrush, contentX + lw + gap, y);
+                    float vw = GetCachedMeasure(item.Value, font);
+                    // Лейбл — к левому краю капсулы; значение — к правому.
+                    float valueX = contentX + contentW - vw;
+                    valueX = Math.Max(valueX, contentX + lw + gap);
+                    _offscreenGraphics.DrawString(item.Label, font, sectionLBrush, contentX, y, StringFormat.GenericTypographic);
+                    _offscreenGraphics.DrawString(item.Value, font, sectionVBrush, valueX, y, StringFormat.GenericTypographic);
                 };
 
                 if (col.Top != null && col.Bottom != null)

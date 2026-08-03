@@ -12,7 +12,34 @@ namespace Kil0bitSystemMonitor.Services
         private readonly string _configPath;
         private readonly object _saveGate = new();
         private CancellationTokenSource? _saveCts;
+        private int _previewDepth;
         public AppConfig Config { get; private set; }
+
+        public bool IsPreviewing
+        {
+            get { lock (_saveGate) return _previewDepth > 0; }
+        }
+
+        public void BeginPreview()
+        {
+            lock (_saveGate)
+            {
+                _previewDepth++;
+                _saveCts?.Cancel();
+            }
+        }
+
+        public void EndPreview(bool commit)
+        {
+            lock (_saveGate)
+            {
+                if (_previewDepth > 0)
+                    _previewDepth--;
+            }
+
+            if (commit)
+                SaveConfig();
+        }
 
         public ConfigService()
         {
@@ -27,7 +54,8 @@ namespace Kil0bitSystemMonitor.Services
 
             Config.PropertyChanged += (s, e) =>
             {
-                ScheduleSave();
+                if (!IsPreviewing)
+                    ScheduleSave();
                 if (e.PropertyName == nameof(AppConfig.LaunchOnStartup))
                     StartupService.SetStartup(Config.LaunchOnStartup);
                 if (e.PropertyName == nameof(AppConfig.Language))
@@ -82,6 +110,9 @@ namespace Kil0bitSystemMonitor.Services
                 string json;
                 lock (_saveGate)
                 {
+                    // Preview не должен попасть на диск даже от опоздавшего ScheduleSave.
+                    if (_previewDepth > 0)
+                        return;
                     json = JsonSerializer.Serialize(Config, new JsonSerializerOptions { WriteIndented = true });
                     File.WriteAllText(_configPath, json);
                 }

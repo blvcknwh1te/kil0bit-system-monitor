@@ -893,11 +893,11 @@
                         <TextBlock Text="Connect with the Developer" FontWeight="SemiBold" FontSize="16" Margin="0,20,0,12"/>
                         
                         <UniformGrid Columns="2" HorizontalAlignment="Left">
-                            <ui:HyperlinkButton Content="YouTube (@kilObit)" NavigateUri="https://www.youtube.com/@kilObit" FontSize="14" Margin="0,0,16,10"/>
-                            <ui:HyperlinkButton Content="GitHub (kil0bit-kb)" NavigateUri="https://github.com/kil0bit-kb" FontSize="14" Margin="0,0,0,10"/>
-                            <ui:HyperlinkButton Content="Blog (kil0bit.blogspot.com)" NavigateUri="https://kil0bit.blogspot.com/" FontSize="14" Margin="0,0,16,10"/>
-                            <ui:HyperlinkButton Content="X (@kil0bit)" NavigateUri="https://x.com/kil0bit" FontSize="14" Margin="0,0,0,10"/>
-                            <ui:HyperlinkButton Content="Support Me (Patreon)" NavigateUri="https://www.patreon.com/cw/KB_kilObit" FontSize="14" Margin="0,0,16,10"/>
+                            <ui:HyperlinkButton Content="YouTube (@kilObit)" Tag="loc:Settings.About.YouTube" NavigateUri="https://www.youtube.com/@kilObit" FontSize="14" Margin="0,0,16,10"/>
+                            <ui:HyperlinkButton Content="GitHub (kil0bit-kb)" Tag="loc:Settings.About.GitHub" NavigateUri="https://github.com/kil0bit-kb" FontSize="14" Margin="0,0,0,10"/>
+                            <ui:HyperlinkButton Content="Blog (kil0bit.blogspot.com)" Tag="loc:Settings.About.Blog" NavigateUri="https://kil0bit.blogspot.com/" FontSize="14" Margin="0,0,16,10"/>
+                            <ui:HyperlinkButton Content="X (@kil0bit)" Tag="loc:Settings.About.X" NavigateUri="https://x.com/kil0bit" FontSize="14" Margin="0,0,0,10"/>
+                            <ui:HyperlinkButton Content="Support Me (Patreon)" Tag="loc:Settings.About.Patreon" NavigateUri="https://www.patreon.com/cw/KB_kilObit" FontSize="14" Margin="0,0,16,10"/>
                         </UniformGrid>
 
                         <StackPanel Margin="0,30,0,0" Opacity="0.6">
@@ -918,7 +918,7 @@
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
-                <Button x:Name="QuitBtn" Grid.Column="0" Content="Quit Application" Click="QuitButton_Click" 
+                <Button x:Name="QuitBtn" Grid.Column="0" Content="Quit Application" Tag="loc:Settings.Footer.Quit" Click="QuitButton_Click" 
                         Style="{StaticResource AccentButtonStyle}"
                         Background="#D32F2F" Foreground="White" 
                         HorizontalAlignment="Left" Padding="16,8" ui:ControlHelper.CornerRadius="4"/>
@@ -928,11 +928,11 @@
                         HorizontalAlignment="Center" Padding="16,8" ui:ControlHelper.CornerRadius="4">
                     <StackPanel Orientation="Horizontal">
                         <ui:SymbolIcon Symbol="Refresh" Margin="0,0,8,0" />
-                        <TextBlock Text="Reset All Settings" VerticalAlignment="Center"/>
+                        <TextBlock x:Name="ResetAllText" Text="Reset All Settings" Tag="loc:Settings.Footer.ResetAll" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Button>
 
-                <Button x:Name="SaveCloseBtn" Grid.Column="2" Content="Save &amp; Close" Click="SaveButton_Click" 
+                <Button x:Name="SaveCloseBtn" Grid.Column="2" Content="Save &amp; Close" Tag="loc:Settings.Footer.SaveClose" Click="SaveButton_Click" 
                         Style="{StaticResource AccentButtonStyle}"
                         HorizontalAlignment="Right" Padding="24,8" ui:ControlHelper.CornerRadius="4"/>
             </Grid>

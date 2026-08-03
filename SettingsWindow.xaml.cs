@@ -71,10 +71,22 @@ namespace Kil0bitSystemMonitor
         {
             try
             {
-                SettingsLocalization.Apply(this, SettingsNav);
+                var L = LocalizationService.Instance;
+                SettingsLocalization.Apply(this, SettingsNav, SettingsRoot);
+
+                // Footer — явно: ModernWpf/AccessText (&) ломают обход дерева.
+                QuitBtn.Content = L["Settings.Footer.Quit"];
+                SaveCloseBtn.Content = L["Settings.Footer.SaveClose"];
+                if (ResetAllText != null)
+                    ResetAllText.Text = L["Settings.Footer.ResetAll"];
+
                 SyncComboSelections();
+                DebugLogger.Info("Settings.Loc", $"Applied language={L.Language} footerQuit={QuitBtn.Content}");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                DebugLogger.Error("Settings.Loc", ex.ToString());
+            }
         }
 
         private void SyncComboSelections()
@@ -410,50 +422,98 @@ namespace Kil0bitSystemMonitor
 
         private void ColorButton_Click(object sender, RoutedEventArgs e)
         {
-            if (sender is System.Windows.Controls.Button btn && btn.Tag is string tag)
+            if (sender is not System.Windows.Controls.Button btn || btn.Tag is not string tag)
+                return;
+
+            // Snapshot до preview: null у section-цветов = inherit.
+            string? snapshot = GetStoredHex(tag);
+            string displayHex = snapshot
+                ?? (IsSectionColorTag(tag)
+                    ? (tag.Contains("Accent", StringComparison.Ordinal) ? _config.Config.AccentColorHex : _config.Config.LabelColorHex)
+                    : "#FFFFFFFF");
+
+            if (!ColorHex.TryParse(displayHex, out var initial))
+                initial = System.Windows.Media.Colors.White;
+
+            if (displayHex.TrimStart('#').Length == 6 && tag == "Background")
+                initial.A = 0xB4;
+
+            _config.BeginPreview();
+            var picker = new ColorPickerWindow(initial) { Owner = this };
+            picker.ColorChanged += c => ApplyColorHex(tag, ColorHex.ToArgbHex(c));
+
+            bool committed = picker.ShowDialog() == true;
+            if (committed)
             {
-                using (var dialog = new System.Windows.Forms.ColorDialog())
-                {
-                    dialog.FullOpen = true;
-                    string currentHex = tag switch {
-                        "Accent"       => _config.Config.AccentColorHex,
-                        "Label"        => _config.Config.LabelColorHex,
-                        "Background"   => _config.Config.BackgroundColorHex,
-                        "Pod"          => _config.Config.PodColorHex,
-                        "NetLabel"     => _config.Config.NetLabelColorHex    ?? _config.Config.LabelColorHex,
-                        "CpuRamLabel"  => _config.Config.CpuRamLabelColorHex ?? _config.Config.LabelColorHex,
-                        "GpuLabel"     => _config.Config.GpuLabelColorHex    ?? _config.Config.LabelColorHex,
-                        "DiskLabel"    => _config.Config.DiskLabelColorHex   ?? _config.Config.LabelColorHex,
-                        "NetAccent"    => _config.Config.NetAccentColorHex    ?? _config.Config.AccentColorHex,
-                        "CpuRamAccent" => _config.Config.CpuRamAccentColorHex ?? _config.Config.AccentColorHex,
-                        "GpuAccent"    => _config.Config.GpuAccentColorHex    ?? _config.Config.AccentColorHex,
-                        "DiskAccent"   => _config.Config.DiskAccentColorHex   ?? _config.Config.AccentColorHex,
-                        _              => "#FFFFFF"
-                    };
-                    try { var c = (System.Windows.Media.Color)System.Windows.Media.ColorConverter.ConvertFromString(currentHex); dialog.Color = System.Drawing.Color.FromArgb(c.R, c.G, c.B); } catch { }
-                    if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-                    {
-                        string alpha = "FF";
-                        if (currentHex.Length == 9) alpha = currentHex.Substring(1, 2);
-                        else if (tag == "Background") alpha = "B4";
-                        string hex = $"#{alpha}{dialog.Color.R:X2}{dialog.Color.G:X2}{dialog.Color.B:X2}";
-                        switch (tag)
-                        {
-                            case "Accent":       _config.Config.AccentColorHex = hex; break;
-                            case "Label":        _config.Config.LabelColorHex = hex; break;
-                            case "Background":   _config.Config.BackgroundColorHex = hex; break;
-                            case "Pod":          _config.Config.PodColorHex = hex; break;
-                            case "NetLabel":     _config.Config.NetLabelColorHex = hex; break;
-                            case "CpuRamLabel":  _config.Config.CpuRamLabelColorHex = hex; break;
-                            case "GpuLabel":     _config.Config.GpuLabelColorHex = hex; break;
-                            case "DiskLabel":    _config.Config.DiskLabelColorHex = hex; break;
-                            case "NetAccent":    _config.Config.NetAccentColorHex = hex; break;
-                            case "CpuRamAccent": _config.Config.CpuRamAccentColorHex = hex; break;
-                            case "GpuAccent":    _config.Config.GpuAccentColorHex = hex; break;
-                            case "DiskAccent":   _config.Config.DiskAccentColorHex = hex; break;
-                        }
-                    }
-                }
+                ApplyColorHex(tag, ColorHex.ToArgbHex(picker.SelectedColor));
+                _config.EndPreview(commit: true);
+            }
+            else
+            {
+                RestoreColorHex(tag, snapshot);
+                _config.EndPreview(commit: false);
+            }
+        }
+
+        private static bool IsSectionColorTag(string tag) => tag is
+            "NetLabel" or "CpuRamLabel" or "GpuLabel" or "DiskLabel" or
+            "NetAccent" or "CpuRamAccent" or "GpuAccent" or "DiskAccent";
+
+        private string? GetStoredHex(string tag) => tag switch
+        {
+            "Accent" => _config.Config.AccentColorHex,
+            "Label" => _config.Config.LabelColorHex,
+            "Background" => _config.Config.BackgroundColorHex,
+            "Pod" => _config.Config.PodColorHex,
+            "NetLabel" => _config.Config.NetLabelColorHex,
+            "CpuRamLabel" => _config.Config.CpuRamLabelColorHex,
+            "GpuLabel" => _config.Config.GpuLabelColorHex,
+            "DiskLabel" => _config.Config.DiskLabelColorHex,
+            "NetAccent" => _config.Config.NetAccentColorHex,
+            "CpuRamAccent" => _config.Config.CpuRamAccentColorHex,
+            "GpuAccent" => _config.Config.GpuAccentColorHex,
+            "DiskAccent" => _config.Config.DiskAccentColorHex,
+            _ => null
+        };
+
+        private void ApplyColorHex(string tag, string hex)
+        {
+            // Без лишнего PropertyChanged, если значение не менялось (в т.ч. повтор OK после preview).
+            if (GetStoredHex(tag) == hex) return;
+
+            switch (tag)
+            {
+                case "Accent": _config.Config.AccentColorHex = hex; break;
+                case "Label": _config.Config.LabelColorHex = hex; break;
+                case "Background": _config.Config.BackgroundColorHex = hex; break;
+                case "Pod": _config.Config.PodColorHex = hex; break;
+                case "NetLabel": _config.Config.NetLabelColorHex = hex; break;
+                case "CpuRamLabel": _config.Config.CpuRamLabelColorHex = hex; break;
+                case "GpuLabel": _config.Config.GpuLabelColorHex = hex; break;
+                case "DiskLabel": _config.Config.DiskLabelColorHex = hex; break;
+                case "NetAccent": _config.Config.NetAccentColorHex = hex; break;
+                case "CpuRamAccent": _config.Config.CpuRamAccentColorHex = hex; break;
+                case "GpuAccent": _config.Config.GpuAccentColorHex = hex; break;
+                case "DiskAccent": _config.Config.DiskAccentColorHex = hex; break;
+            }
+        }
+
+        private void RestoreColorHex(string tag, string? snapshot)
+        {
+            switch (tag)
+            {
+                case "Accent": _config.Config.AccentColorHex = snapshot ?? "#FFFFFFFF"; break;
+                case "Label": _config.Config.LabelColorHex = snapshot ?? "#FF00CCFF"; break;
+                case "Background": _config.Config.BackgroundColorHex = snapshot ?? "#B4141414"; break;
+                case "Pod": _config.Config.PodColorHex = snapshot ?? "#0FFFFFFF"; break;
+                case "NetLabel": _config.Config.NetLabelColorHex = snapshot; break;
+                case "CpuRamLabel": _config.Config.CpuRamLabelColorHex = snapshot; break;
+                case "GpuLabel": _config.Config.GpuLabelColorHex = snapshot; break;
+                case "DiskLabel": _config.Config.DiskLabelColorHex = snapshot; break;
+                case "NetAccent": _config.Config.NetAccentColorHex = snapshot; break;
+                case "CpuRamAccent": _config.Config.CpuRamAccentColorHex = snapshot; break;
+                case "GpuAccent": _config.Config.GpuAccentColorHex = snapshot; break;
+                case "DiskAccent": _config.Config.DiskAccentColorHex = snapshot; break;
             }
         }
 

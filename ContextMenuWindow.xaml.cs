@@ -33,30 +33,31 @@ namespace Kil0bitSystemMonitor
             this.Top = screenY;
             this.Show();
 
+            var L = LocalizationService.Instance;
             var menu = new ContextMenu();
 
-            var settingsItem = new MenuItem { Header = "Settings" };
+            var settingsItem = new MenuItem { Header = L["Overlay.Menu.Settings"] };
             settingsItem.Click += (s, e) =>
             {
                 App.OpenSettings(_viewModel, _config);
                 this.Close();
             };
 
-            var taskMgrItem = new MenuItem { Header = "Task Manager" };
+            var taskMgrItem = new MenuItem { Header = L["Overlay.Menu.TaskManager"] };
             taskMgrItem.Click += (s, e) =>
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr") { UseShellExecute = true });
                 this.Close();
             };
 
-            var aboutItem = new MenuItem { Header = "About" };
+            var aboutItem = new MenuItem { Header = L["Overlay.Menu.About"] };
             aboutItem.Click += (s, e) =>
             {
                 System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/kil0bit-kb/kil0bit-system-monitor") { UseShellExecute = true });
                 this.Close();
             };
 
-            var exitItem = new MenuItem { Header = "Exit" };
+            var exitItem = new MenuItem { Header = L["Overlay.Menu.Exit"] };
             exitItem.Click += (s, e) => App.Quit();
 
             menu.Items.Add(settingsItem);

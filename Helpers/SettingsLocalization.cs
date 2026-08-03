@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Media;
 using Kil0bitSystemMonitor.Services;
 using ModernWpf.Controls;
@@ -99,6 +100,11 @@ namespace Kil0bitSystemMonitor.Helpers
             ["Connect with the Developer"] = "Settings.About.Connect",
             ["Built with ❤️ by KB - kil0bit"] = "Settings.About.BuiltWith",
             ["© 2026 Kil0bit System Monitor"] = "Settings.About.Copyright",
+            ["YouTube (@kilObit)"] = "Settings.About.YouTube",
+            ["GitHub (kil0bit-kb)"] = "Settings.About.GitHub",
+            ["Blog (kil0bit.blogspot.com)"] = "Settings.About.Blog",
+            ["X (@kil0bit)"] = "Settings.About.X",
+            ["Support Me (Patreon)"] = "Settings.About.Patreon",
             ["Quit Application"] = "Settings.Footer.Quit",
             ["Reset All Settings"] = "Settings.Footer.ResetAll",
             ["Save & Close"] = "Settings.Footer.SaveClose",
@@ -120,7 +126,6 @@ namespace Kil0bitSystemMonitor.Helpers
             ["Русский"] = "Settings.General.Language.Ru",
         };
 
-        // Обратный словарь: любой уже переведённый текст → ключ
         private static readonly Dictionary<string, string> AnyTextToKey = new();
 
         static SettingsLocalization()
@@ -135,7 +140,7 @@ namespace Kil0bitSystemMonitor.Helpers
                 AnyTextToKey[translated] = key;
         }
 
-        public static void Apply(Window window, NavigationView? nav = null)
+        public static void Apply(Window window, NavigationView? nav = null, DependencyObject? contentRoot = null)
         {
             var L = LocalizationService.Instance;
             window.Title = L["Settings.Title"];
@@ -157,64 +162,146 @@ namespace Kil0bitSystemMonitor.Helpers
                 }
             }
 
-            ApplyElement(window, L);
+            ApplyElement(contentRoot ?? window, L, new HashSet<DependencyObject>());
         }
 
-        private static void ApplyElement(DependencyObject parent, LocalizationService L)
+        private static void ApplyElement(DependencyObject parent, LocalizationService L, HashSet<DependencyObject> visited)
         {
-            switch (parent)
+            if (!visited.Add(parent)) return;
+
+            try
             {
-                case TextBlock tb:
-                    ApplyText(tb, () => tb.Text, v => tb.Text = v, L);
-                    break;
-                case System.Windows.Controls.Button btn when btn.Content is string:
-                    ApplyText(btn, () => btn.Content?.ToString() ?? "", v => btn.Content = v, L);
-                    break;
-                case HyperlinkButton hb when hb.Content is string:
-                    ApplyText(hb, () => hb.Content?.ToString() ?? "", v => hb.Content = v, L);
-                    break;
-                case ComboBoxItem cbi:
-                    ApplyText(cbi, () => cbi.Content?.ToString() ?? "", v => cbi.Content = v, L);
-                    break;
-                case ToggleSwitch ts:
-                    if (!string.IsNullOrEmpty(ts.Header?.ToString()))
-                    {
-                        string header = ts.Header.ToString()!;
-                        if (TryResolveKey(header, out var key))
+                switch (parent)
+                {
+                    case TextBlock tb:
+                        ApplyText(tb, () => tb.Text, v => tb.Text = v, L);
+                        break;
+                    case AccessText at:
+                        ApplyText(at, () => at.Text, v => at.Text = v, L);
+                        break;
+                    case System.Windows.Controls.Button btn:
+                        ApplyButtonContent(btn, L, visited);
+                        break;
+                    case HyperlinkButton hb:
+                        if (TryGetLocKeyFromTag(hb, out var hbKey))
                         {
-                            string translated = L[key];
-                            RegisterTranslated(key, translated);
-                            ts.Header = translated;
+                            string translated = L[hbKey];
+                            RegisterTranslated(hbKey, translated);
+                            hb.Content = translated;
                         }
-                    }
-                    break;
-                case System.Windows.Controls.ComboBox cb:
-                    // Items часто нет в visual tree до открытия — локализуем явно
-                    foreach (var item in cb.Items)
-                    {
-                        if (item is DependencyObject d)
-                            ApplyElement(d, L);
-                    }
-                    break;
+                        else
+                        {
+                            ApplyButtonLikeContent(hb, () => hb.Content, v => hb.Content = v, hb, L, visited);
+                        }
+                        break;
+                    case ComboBoxItem cbi:
+                        ApplyButtonLikeContent(cbi, () => cbi.Content, v => cbi.Content = v, cbi, L, visited);
+                        break;
+                    case ToggleSwitch ts:
+                        if (!string.IsNullOrEmpty(ts.Header?.ToString()))
+                        {
+                            string header = ts.Header.ToString()!;
+                            if (TryResolveKey(header, out var key))
+                            {
+                                string translated = L[key];
+                                RegisterTranslated(key, translated);
+                                ts.Header = translated;
+                            }
+                        }
+                        break;
+                    case System.Windows.Controls.ComboBox cb:
+                        foreach (var item in cb.Items)
+                        {
+                            if (item is DependencyObject d)
+                                ApplyElement(d, L, visited);
+                        }
+                        break;
+                }
             }
-
-            if (parent is System.Windows.Controls.Button { Content: DependencyObject contentDo })
-                ApplyElement(contentDo, L);
-
-            int count = VisualTreeHelper.GetChildrenCount(parent);
-            if (count > 0)
+            catch (Exception ex)
             {
-                for (int i = 0; i < count; i++)
-                    ApplyElement(VisualTreeHelper.GetChild(parent, i), L);
+                DebugLogger.Warn("Settings.Loc", $"ApplyElement {parent.GetType().Name}: {ex.Message}");
             }
-            else if (parent is not System.Windows.Controls.ComboBox)
+
+            // Только Visual: ColumnDefinition/RowDefinition из LogicalTree не Visual —
+            // VisualTreeHelper на них роняет весь Apply.
+            if (parent is Visual or System.Windows.Media.Media3D.Visual3D)
+            {
+                try
+                {
+                    int count = VisualTreeHelper.GetChildrenCount(parent);
+                    for (int i = 0; i < count; i++)
+                        ApplyElement(VisualTreeHelper.GetChild(parent, i), L, visited);
+                }
+                catch (InvalidOperationException) { }
+            }
+
+            if (parent is not System.Windows.Controls.ComboBox)
             {
                 foreach (var child in LogicalTreeHelper.GetChildren(parent))
                 {
                     if (child is DependencyObject d)
-                        ApplyElement(d, L);
+                        ApplyElement(d, L, visited);
                 }
             }
+        }
+
+        private static void ApplyButtonContent(System.Windows.Controls.Button btn, LocalizationService L, HashSet<DependencyObject> visited)
+        {
+            if (TryGetLocKeyFromTag(btn, out var locKey))
+            {
+                string translated = L[locKey];
+                RegisterTranslated(locKey, translated);
+                SetContentText(btn, translated);
+                return;
+            }
+
+            ApplyButtonLikeContent(btn, () => btn.Content, v => btn.Content = v, btn, L, visited);
+
+            if (btn.Content is DependencyObject contentDo && btn.Content is not AccessText)
+                ApplyElement(contentDo, L, visited);
+        }
+
+        private static void ApplyButtonLikeContent(
+            FrameworkElement owner,
+            Func<object?> getContent,
+            Action<object?> setContent,
+            DependencyObject textOwner,
+            LocalizationService L,
+            HashSet<DependencyObject> visited)
+        {
+            object? content = getContent();
+            if (content is string s)
+            {
+                ApplyText(textOwner, () => s, v => setContent(v), L);
+                return;
+            }
+            if (content is AccessText at)
+            {
+                ApplyText(at, () => at.Text, v => at.Text = v, L);
+                return;
+            }
+            if (content is DependencyObject d)
+                ApplyElement(d, L, visited);
+        }
+
+        private static void SetContentText(System.Windows.Controls.Button btn, string text)
+        {
+            if (btn.Content is AccessText at)
+                at.Text = text;
+            else
+                btn.Content = text;
+        }
+
+        private static bool TryGetLocKeyFromTag(FrameworkElement fe, out string key)
+        {
+            key = "";
+            if (fe.Tag is string tag && tag.StartsWith("loc:", StringComparison.Ordinal))
+            {
+                key = tag[4..];
+                return !string.IsNullOrEmpty(key);
+            }
+            return false;
         }
 
         private static readonly HashSet<string> PreserveTags = new(StringComparer.OrdinalIgnoreCase)
@@ -224,16 +311,16 @@ namespace Kil0bitSystemMonitor.Helpers
             "ProcessList", "TaskManager", "Day", "Week", "Month",
             "Text", "Compact", "Default",
             "NetLabel", "NetAccent", "CpuRamLabel", "CpuRamAccent",
-            "GpuLabel", "GpuAccent", "DiskLabel", "DiskAccent"
+            "GpuLabel", "GpuAccent", "DiskLabel", "DiskAccent",
+            "Accent", "Label", "Background", "Pod"
         };
 
-        private static void ApplyText(DependencyObject owner, System.Func<string> get, System.Action<string> set, LocalizationService L)
+        private static void ApplyText(DependencyObject owner, Func<string> get, Action<string> set, LocalizationService L)
         {
             string current = get();
             if (string.IsNullOrWhiteSpace(current)) return;
 
-            // Уже помечен ключом локализации
-            if (owner is FrameworkElement fe && fe.Tag is string tag && tag.StartsWith("loc:"))
+            if (owner is FrameworkElement fe && fe.Tag is string tag && tag.StartsWith("loc:", StringComparison.Ordinal))
             {
                 string key = tag[4..];
                 string translated = L[key];
@@ -242,15 +329,17 @@ namespace Kil0bitSystemMonitor.Helpers
                 return;
             }
 
-            // Tag используется для binding (Sort/Language) — не трогаем
             bool preserveTag = owner is FrameworkElement feTag &&
                                feTag.Tag is string existingTag &&
                                PreserveTags.Contains(existingTag);
 
             if (TryResolveKey(current, out var resolved))
             {
-                if (owner is FrameworkElement fe2 && !preserveTag)
+                if (owner is FrameworkElement fe2 && !preserveTag &&
+                    (fe2.Tag is null || (fe2.Tag is string t && t.StartsWith("loc:", StringComparison.Ordinal))))
+                {
                     fe2.Tag = "loc:" + resolved;
+                }
                 string translated = L[resolved];
                 RegisterTranslated(resolved, translated);
                 set(translated);

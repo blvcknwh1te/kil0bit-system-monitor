@@ -53,6 +53,11 @@ namespace Kil0bitSystemMonitor
                 args.SetObserved();
             };
 
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                try { Kil0bitSystemMonitor.Services.DebugLogger.Info("App", "ProcessExit"); } catch { }
+            };
+
             // Robust single-instance check using Mutex
             bool createdNew;
             s_mutex = new System.Threading.Mutex(true, "Local\\Kil0bitSystemMonitor_SingleInstance_Mutex", out createdNew);
