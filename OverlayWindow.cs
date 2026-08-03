@@ -41,6 +41,17 @@ namespace Kil0bitSystemMonitor
         private long _lastDragEndTick;
         private const int DragThresholdPx = 8;
         private const int PostDragClickGuardMs = 120;
+        // Свой drag + ease ~0.2s (вместо HTCAPTION)
+        private int _dragOffsetX;
+        private int _dragOffsetY;
+        private double _dragPosX;
+        private double _dragPosY;
+        private double _dragTargetX;
+        private double _dragTargetY;
+        private long _dragAnimTick;
+        private System.Windows.Threading.DispatcherTimer? _dragAnimTimer;
+        private const double DragEaseSeconds = 0.2;
+        private const double DragEaseTau = DragEaseSeconds / 3.0;
         private ProcessListWindow? _processListWindow;
 
         // Visibility / fade state
@@ -77,17 +88,14 @@ namespace Kil0bitSystemMonitor
         private const uint WS_POPUP = 0x80000000;
         private const int WM_NCHITTEST = 0x0084;
         private const int WM_RBUTTONUP = 0x0205;
-        private const int HTCAPTION = 2;
         private const int WM_LBUTTONDOWN = 0x0201;
         private const int WM_LBUTTONUP = 0x0202;
         private const int WM_LBUTTONDBLCLK = 0x0203;
-        private const int WM_NCLBUTTONDOWN = 0x00A1;
         private const int WM_MOUSEMOVE = 0x0200;
         private const int WM_MOUSELEAVE = 0x02A3;
         private const int WM_CAPTURECHANGED = 0x0215;
         private const int WM_WINDOWPOSCHANGING = 0x0046;
         private const int WM_WINDOWPOSCHANGED = 0x0047;
-        private const int WM_EXITSIZEMOVE = 0x0232;
         private const int WM_DISPLAYCHANGE = 0x007E;
         private const int WM_DPICHANGED = 0x02E0;
         private const int WM_SETTINGCHANGE = 0x001A;
@@ -479,6 +487,116 @@ namespace Kil0bitSystemMonitor
             SetWindowPos(_hWnd, IntPtr.Zero, x, cy, 0, 0, 0x0001 | 0x0004 | 0x0010);
             _config.Config.X = x;
             _config.Config.Y = cy;
+        }
+
+        private void BeginCustomDrag()
+        {
+            if (!Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT r))
+                return;
+
+            _dragOffsetX = _lButtonDownScreenX - r.Left;
+            _dragOffsetY = _lButtonDownScreenY - r.Top;
+            _dragPosX = r.Left;
+            _dragPosY = r.Top;
+            UpdateDragTargetFromCursor();
+            _dragAnimTick = Environment.TickCount64;
+
+            if (_dragAnimTimer == null)
+            {
+                _dragAnimTimer = new System.Windows.Threading.DispatcherTimer(
+                    System.Windows.Threading.DispatcherPriority.Render, _dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(10)
+                };
+                _dragAnimTimer.Tick += (_, _) => TickDragAnimation();
+            }
+
+            if (!_dragAnimTimer.IsEnabled)
+                _dragAnimTimer.Start();
+        }
+
+        private void UpdateDragTargetFromCursor()
+        {
+            if (!Win32Helper.GetCursorPos(out Win32Helper.POINT cur))
+                return;
+
+            double tx = cur.X - _dragOffsetX;
+            double ty = cur.Y - _dragOffsetY;
+
+            if (_config.Config.StickToTaskbar)
+            {
+                int overlayW = Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT wr) ? wr.Width : 200;
+                IntPtr taskbar = ResolveTaskbarForPoint(cur.X, cur.Y);
+                if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
+                {
+                    int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
+                    ty = tb.Top + (tb.Bottom - tb.Top - oh) / 2.0;
+                    if (TryGetTaskbarDragRange(taskbar, tb, overlayW, out int minX, out int maxX))
+                        tx = Math.Max(minX, Math.Min(maxX, tx));
+                }
+            }
+
+            _dragTargetX = tx;
+            _dragTargetY = ty;
+        }
+
+        private void TickDragAnimation()
+        {
+            if (!_lButtonDragged || _hWnd == IntPtr.Zero)
+            {
+                _dragAnimTimer?.Stop();
+                return;
+            }
+
+            UpdateDragTargetFromCursor();
+
+            long now = Environment.TickCount64;
+            double dt = Math.Clamp((now - _dragAnimTick) / 1000.0, 0.001, 0.05);
+            _dragAnimTick = now;
+
+            double t = 1.0 - Math.Exp(-dt / DragEaseTau);
+            _dragPosX += (_dragTargetX - _dragPosX) * t;
+            _dragPosY += (_dragTargetY - _dragPosY) * t;
+
+            int x = (int)Math.Round(_dragPosX);
+            int y = (int)Math.Round(_dragPosY);
+            SetWindowPos(_hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010);
+        }
+
+        private void EndCustomDrag()
+        {
+            _dragAnimTimer?.Stop();
+            _lastDragEndTick = Environment.TickCount64;
+
+            UpdateDragTargetFromCursor();
+            int x = (int)Math.Round(_dragTargetX);
+            int y = (int)Math.Round(_dragTargetY);
+
+            if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT r))
+            {
+                if (_config.Config.StickToTaskbar)
+                {
+                    IntPtr taskbar = ResolveTaskbarForPoint(r.Left + r.Width / 2, r.Top + r.Height / 2);
+                    if (taskbar == IntPtr.Zero && Win32Helper.GetCursorPos(out Win32Helper.POINT c))
+                        taskbar = ResolveTaskbarForPoint(c.X, c.Y);
+
+                    if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb) &&
+                        TryGetTaskbarDragRange(taskbar, tb, r.Width, out int minX, out int maxX))
+                    {
+                        EnsureAttachedToTaskbar(taskbar);
+                        int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
+                        y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
+                        x = Math.Max(minX, Math.Min(maxX, x));
+                    }
+                }
+            }
+
+            _dragPosX = x;
+            _dragPosY = y;
+            SetWindowPos(_hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010);
+            _config.Config.X = x;
+            _config.Config.Y = y;
+            _config.SaveConfig();
         }
 
         private void AttachToTaskbar()
@@ -1118,7 +1236,7 @@ namespace Kil0bitSystemMonitor
                     try { _processListWindow?.Close(); } catch { }
                     _processListWindow = null;
                 });
-                _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); UnregisterShellHook(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);
+                _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); _dragAnimTimer?.Stop(); UnregisterShellHook(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);
             }
             catch { }
         }
@@ -1185,46 +1303,19 @@ namespace Kil0bitSystemMonitor
                 return IntPtr.Zero;
             }
             if (msg == WM_APPBAR_CALLBACK) { if ((uint)wParam.ToInt32() == ABN_FULLSCREENAPP) { _shellFullscreen = (lParam != IntPtr.Zero); _dispatcher.BeginInvoke(UpdateVisibility); } return IntPtr.Zero; }
-            if (msg == WM_EXITSIZEMOVE)
-            {
-                _lastDragEndTick = Environment.TickCount64;
-                _lButtonDown = false;
-                _lButtonDragged = false;
-                if (Win32Helper.GetWindowRect(hWnd, out Win32Helper.RECT r))
-                {
-                    if (_config.Config.StickToTaskbar)
-                    {
-                        IntPtr taskbar = ResolveTaskbarForPoint(r.Left + r.Width / 2, r.Top + r.Height / 2);
-                        if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb) &&
-                            TryGetTaskbarDragRange(taskbar, tb, r.Width, out int minX, out int maxX))
-                        {
-                            EnsureAttachedToTaskbar(taskbar);
-                            int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
-                            int y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
-                            int x = Math.Max(minX, Math.Min(maxX, r.Left));
-                            if (x != r.Left || y != r.Top)
-                                SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010);
-                            _config.Config.X = x;
-                            _config.Config.Y = y;
-                        }
-                        else
-                        {
-                            _config.Config.X = r.Left;
-                            _config.Config.Y = r.Top;
-                        }
-                    }
-                    else
-                    {
-                        _config.Config.X = r.Left;
-                        _config.Config.Y = r.Top;
-                    }
-                    _config.SaveConfig();
-                }
-                return IntPtr.Zero;
-            }
             if (msg == WM_SHOW_SETTINGS) { _dispatcher.BeginInvoke(() => App.OpenSettings(_viewModel, _config)); return IntPtr.Zero; }
             if (msg == WM_DPICHANGED) { _currentDpi = (uint)(wParam.ToInt32() & 0xFFFF); _dpiScale = _currentDpi / 96.0f; ClearCaches(); ScheduleTaskbarBoundsRefresh(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
             if (msg == WM_DISPLAYCHANGE || msg == WM_SETTINGCHANGE) { ScheduleTaskbarBoundsRefresh(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
+            if (msg == WM_CAPTURECHANGED)
+            {
+                if (_lButtonDragged && wParam != hWnd)
+                {
+                    EndCustomDrag();
+                    _lButtonDown = false;
+                    _lButtonDragged = false;
+                }
+                return IntPtr.Zero;
+            }
             if (msg == WM_MOUSEMOVE)
             {
                 if (!_trackingMouse)
@@ -1236,7 +1327,13 @@ namespace Kil0bitSystemMonitor
                     UpdateLayer();
                 }
 
-                if (_lButtonDown && !_lButtonDragged && !_config.Config.LockPosition &&
+                if (_lButtonDragged)
+                {
+                    UpdateDragTargetFromCursor();
+                    return IntPtr.Zero;
+                }
+
+                if (_lButtonDown && !_config.Config.LockPosition &&
                     Win32Helper.GetCursorPos(out Win32Helper.POINT cur))
                 {
                     int dx = Math.Abs(cur.X - _lButtonDownScreenX);
@@ -1244,8 +1341,7 @@ namespace Kil0bitSystemMonitor
                     if (dx > DragThresholdPx || dy > DragThresholdPx)
                     {
                         _lButtonDragged = true;
-                        ReleaseCapture();
-                        SendMessage(hWnd, WM_NCLBUTTONDOWN, (IntPtr)HTCAPTION, IntPtr.Zero);
+                        BeginCustomDrag();
                         return IntPtr.Zero;
                     }
                 }
@@ -1284,6 +1380,10 @@ namespace Kil0bitSystemMonitor
                 bool wasDown = _lButtonDown;
                 bool wasDragged = _lButtonDragged;
                 long sinceDrag = Environment.TickCount64 - _lastDragEndTick;
+
+                if (wasDragged)
+                    EndCustomDrag();
+
                 _lButtonDown = false;
                 _lButtonDragged = false;
                 if (GetCapture() == hWnd)
