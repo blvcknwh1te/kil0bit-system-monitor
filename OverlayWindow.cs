@@ -492,8 +492,6 @@ namespace Kil0bitSystemMonitor
             }
 
             IntPtr taskbarHwnd = ResolveTaskbarForPoint(refX, refY);
-            if (taskbarHwnd == IntPtr.Zero)
-                taskbarHwnd = Win32Helper.FindWindow("Shell_TrayWnd", null!);
 
             if (taskbarHwnd != IntPtr.Zero)
             {
@@ -545,7 +543,8 @@ namespace Kil0bitSystemMonitor
                 return true;
             }, IntPtr.Zero);
 
-            return found != IntPtr.Zero ? found : primary;
+            // Не подставлять primary: иначе оверлей на secondary уезжает на первый экран
+            return found;
         }
 
         private System.Collections.Generic.List<IntPtr> EnumerateTaskbars()
@@ -1136,37 +1135,40 @@ namespace Kil0bitSystemMonitor
             if (msg == WM_WINDOWPOSCHANGING && _config.Config.StickToTaskbar)
             {
                 WINDOWPOS pos = Marshal.PtrToStructure<WINDOWPOS>(lParam);
-                // SWP_NOMOVE = 0x0002 — монитор берём по курсору, границы — у его таскбара
+                // SWP_NOMOVE = 0x0002. Курсор — только во время drag; иначе оверлей
+                // уезжает на монитор под мышью на каждом UpdateLayeredWindow (тики метрик).
                 if ((pos.flags & 0x0002) == 0)
                 {
-                    IntPtr taskbar = IntPtr.Zero;
-                    if (Win32Helper.GetCursorPos(out Win32Helper.POINT cursor))
-                        taskbar = ResolveTaskbarForPoint(cursor.X, cursor.Y);
-                    if (taskbar == IntPtr.Zero)
-                        taskbar = ResolveTaskbarForPoint(pos.x + Math.Max(pos.cx, 1) / 2, pos.y);
+                    int refX;
+                    int refY;
+                    if (_lButtonDragged && Win32Helper.GetCursorPos(out Win32Helper.POINT cursor))
+                    {
+                        refX = cursor.X;
+                        refY = cursor.Y;
+                    }
+                    else if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur) && cur.Width > 0)
+                    {
+                        refX = cur.Left + cur.Width / 2;
+                        refY = cur.Top + cur.Height / 2;
+                    }
+                    else
+                    {
+                        int w = pos.cx > 0 ? pos.cx : 1;
+                        refX = pos.x + w / 2;
+                        refY = pos.y;
+                    }
 
+                    IntPtr taskbar = ResolveTaskbarForPoint(refX, refY);
                     if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
                     {
                         EnsureAttachedToTaskbar(taskbar);
                         int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
                         pos.y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
 
-                        int overlayW = pos.cx > 0 ? pos.cx : (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur) ? cur.Width : 200);
+                        int overlayW = pos.cx > 0 ? pos.cx : (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT wr) ? wr.Width : 200);
                         if (TryGetTaskbarDragRange(taskbar, tb, overlayW, out int minX, out int maxX))
                             pos.x = Math.Max(minX, Math.Min(maxX, pos.x));
 
-                        Marshal.StructureToPtr(pos, lParam, false);
-                    }
-                }
-                else
-                {
-                    IntPtr taskbar = ResolveTaskbarForPoint(pos.x + Math.Max(pos.cx, 1) / 2, pos.y);
-                    if (taskbar == IntPtr.Zero)
-                        taskbar = Win32Helper.FindWindow("Shell_TrayWnd", "");
-                    if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
-                    {
-                        int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
-                        pos.y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
                         Marshal.StructureToPtr(pos, lParam, false);
                     }
                 }
