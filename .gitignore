@@ -502,9 +502,4 @@ log/
 **/log/debug-*.log
 
 # Исключение: выход Release-сборки не игнорировать
-!bin/
-!bin/Release/
-!bin/Release/**
-!bin/release/
-!bin/release/**
-
+###
