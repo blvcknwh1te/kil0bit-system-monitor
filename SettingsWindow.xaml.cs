@@ -6,6 +6,7 @@ using System.Linq;
 using System.IO;
 using Kil0bitSystemMonitor.ViewModels;
 using Kil0bitSystemMonitor.Services;
+using Kil0bitSystemMonitor.Models;
 using Kil0bitSystemMonitor.Helpers;
 using ModernWpf.Controls;
 
@@ -353,6 +354,10 @@ namespace Kil0bitSystemMonitor
             c.ShowBackground = false;
             c.NetLabelColorHex = null; c.CpuRamLabelColorHex = null; c.GpuLabelColorHex = null; c.DiskLabelColorHex = null;
             c.NetAccentColorHex = null; c.CpuRamAccentColorHex = null; c.GpuAccentColorHex = null; c.DiskAccentColorHex = null;
+            c.WarningThreshold = MetricAlertDefaults.WarningThreshold;
+            c.CriticalThreshold = MetricAlertDefaults.CriticalThreshold;
+            c.WarningColorHex = MetricAlertDefaults.WarningColorHex;
+            c.CriticalColorHex = MetricAlertDefaults.CriticalColorHex;
             _config.SaveConfig();
         }
 
@@ -408,6 +413,10 @@ namespace Kil0bitSystemMonitor
             c.ShowBackground = false;
             c.NetLabelColorHex = null; c.CpuRamLabelColorHex = null; c.GpuLabelColorHex = null; c.DiskLabelColorHex = null;
             c.NetAccentColorHex = null; c.CpuRamAccentColorHex = null; c.GpuAccentColorHex = null; c.DiskAccentColorHex = null;
+            c.WarningThreshold = MetricAlertDefaults.WarningThreshold;
+            c.CriticalThreshold = MetricAlertDefaults.CriticalThreshold;
+            c.WarningColorHex = MetricAlertDefaults.WarningColorHex;
+            c.CriticalColorHex = MetricAlertDefaults.CriticalColorHex;
             c.ProcessListSortColumn = "Name";
             c.ProcessListSortAscending = true;
             c.Language = "en";
@@ -473,6 +482,8 @@ namespace Kil0bitSystemMonitor
             "CpuRamAccent" => _config.Config.CpuRamAccentColorHex,
             "GpuAccent" => _config.Config.GpuAccentColorHex,
             "DiskAccent" => _config.Config.DiskAccentColorHex,
+            "Warning" => _config.Config.WarningColorHex,
+            "Critical" => _config.Config.CriticalColorHex,
             _ => null
         };
 
@@ -495,6 +506,8 @@ namespace Kil0bitSystemMonitor
                 case "CpuRamAccent": _config.Config.CpuRamAccentColorHex = hex; break;
                 case "GpuAccent": _config.Config.GpuAccentColorHex = hex; break;
                 case "DiskAccent": _config.Config.DiskAccentColorHex = hex; break;
+                case "Warning": _config.Config.WarningColorHex = hex; break;
+                case "Critical": _config.Config.CriticalColorHex = hex; break;
             }
         }
 
@@ -514,6 +527,8 @@ namespace Kil0bitSystemMonitor
                 case "CpuRamAccent": _config.Config.CpuRamAccentColorHex = snapshot; break;
                 case "GpuAccent": _config.Config.GpuAccentColorHex = snapshot; break;
                 case "DiskAccent": _config.Config.DiskAccentColorHex = snapshot; break;
+                case "Warning": _config.Config.WarningColorHex = snapshot ?? MetricAlertDefaults.WarningColorHex; break;
+                case "Critical": _config.Config.CriticalColorHex = snapshot ?? MetricAlertDefaults.CriticalColorHex; break;
             }
         }
 

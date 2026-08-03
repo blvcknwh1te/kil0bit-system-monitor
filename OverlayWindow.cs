@@ -81,6 +81,8 @@ namespace Kil0bitSystemMonitor
         private Brush? _cachedCpuRamAccentBrush;
         private Brush? _cachedGpuAccentBrush;
         private Brush? _cachedDiskAccentBrush;
+        private Brush? _cachedWarningBrush;
+        private Brush? _cachedCriticalBrush;
         private Bitmap? _offscreenBitmap;
         private Graphics? _offscreenGraphics;
 
@@ -196,7 +198,9 @@ namespace Kil0bitSystemMonitor
                         if (!EnsureOverlayHwndAlive()) return;
                         if (e.PropertyName == nameof(_config.Config.AccentColorHex) || e.PropertyName == nameof(_config.Config.LabelColorHex) || e.PropertyName == nameof(_config.Config.BackgroundColorHex) || e.PropertyName == nameof(_config.Config.PodColorHex) || e.PropertyName == nameof(_config.Config.FontFamily)
                             || e.PropertyName == nameof(_config.Config.NetLabelColorHex) || e.PropertyName == nameof(_config.Config.CpuRamLabelColorHex) || e.PropertyName == nameof(_config.Config.GpuLabelColorHex) || e.PropertyName == nameof(_config.Config.DiskLabelColorHex)
-                            || e.PropertyName == nameof(_config.Config.NetAccentColorHex) || e.PropertyName == nameof(_config.Config.CpuRamAccentColorHex) || e.PropertyName == nameof(_config.Config.GpuAccentColorHex) || e.PropertyName == nameof(_config.Config.DiskAccentColorHex))
+                            || e.PropertyName == nameof(_config.Config.NetAccentColorHex) || e.PropertyName == nameof(_config.Config.CpuRamAccentColorHex) || e.PropertyName == nameof(_config.Config.GpuAccentColorHex) || e.PropertyName == nameof(_config.Config.DiskAccentColorHex)
+                            || e.PropertyName == nameof(_config.Config.WarningColorHex) || e.PropertyName == nameof(_config.Config.CriticalColorHex)
+                            || e.PropertyName == nameof(_config.Config.WarningThreshold) || e.PropertyName == nameof(_config.Config.CriticalThreshold))
                         {
                             ClearCaches();
                             UpdateCachedColors();
@@ -1156,8 +1160,29 @@ namespace Kil0bitSystemMonitor
             }
         }
 
+        private enum MetricSection { Net, CpuRam, Gpu, Disk }
+
         // Reserve: worst-case string to measure for stable column width. Null = use live Value width.
-        private class MetricItem { public string Label { get; set; } = ""; public string Value { get; set; } = ""; public string? Reserve { get; set; } = null; }
+        // Percent01: 0–1 для порогов; null — без warning/critical (сеть, температура).
+        private class MetricItem
+        {
+            public string Label { get; set; } = "";
+            public string Value { get; set; } = "";
+            public string? Reserve { get; set; }
+            public float? Percent01 { get; set; }
+            public MetricSection Section { get; set; }
+        }
+
+        private Brush ResolveValueBrush(Brush sectionAccent, float? percent01)
+        {
+            if (percent01 is not float p)
+                return sectionAccent;
+            if (p >= (float)_config.Config.CriticalThreshold)
+                return _cachedCriticalBrush ?? sectionAccent;
+            if (p >= (float)_config.Config.WarningThreshold)
+                return _cachedWarningBrush ?? sectionAccent;
+            return sectionAccent;
+        }
 
         private void UpdateLayer()
         {
@@ -1228,15 +1253,21 @@ namespace Kil0bitSystemMonitor
                     { _offscreenGraphics.FillPath(pBrush, path); _offscreenGraphics.DrawPath(pPen, path); }
                 }
 
-                // Pick the correct label and accent brushes for this column index
-                Brush sectionLBrush = i == 0 ? netLBrush
-                                    : i == 1 ? cpuLBrush
-                                    : i == 2 ? gpuLBrush
-                                    : dskLBrush;
-                Brush sectionVBrush = i == 0 ? netVBrush
-                                    : i == 1 ? cpuVBrush
-                                    : i == 2 ? gpuVBrush
-                                    : dskVBrush;
+                MetricSection section = (col.Top ?? col.Bottom)?.Section ?? MetricSection.Disk;
+                Brush sectionLBrush = section switch
+                {
+                    MetricSection.Net => netLBrush,
+                    MetricSection.CpuRam => cpuLBrush,
+                    MetricSection.Gpu => gpuLBrush,
+                    _ => dskLBrush
+                };
+                Brush sectionVBrush = section switch
+                {
+                    MetricSection.Net => netVBrush,
+                    MetricSection.CpuRam => cpuVBrush,
+                    MetricSection.Gpu => gpuVBrush,
+                    _ => dskVBrush
+                };
 
                 float contentX = cx + pad;
                 float contentW = Math.Max(0, widths[i] - pad * 2);
@@ -1252,8 +1283,9 @@ namespace Kil0bitSystemMonitor
                     // Лейбл — к левому краю капсулы; значение — к правому.
                     float valueX = contentX + contentW - vw;
                     valueX = Math.Max(valueX, contentX + lw + gap);
+                    Brush valueBrush = ResolveValueBrush(sectionVBrush, item.Percent01);
                     _offscreenGraphics.DrawString(item.Label, font, sectionLBrush, contentX, y, StringFormat.GenericTypographic);
-                    _offscreenGraphics.DrawString(item.Value, font, sectionVBrush, valueX, y, StringFormat.GenericTypographic);
+                    _offscreenGraphics.DrawString(item.Value, font, valueBrush, valueX, y, StringFormat.GenericTypographic);
                 };
 
                 if (col.Top != null && col.Bottom != null)
@@ -1286,28 +1318,31 @@ namespace Kil0bitSystemMonitor
             var m = _viewModel.Metrics; var c = _config.Config;
             var L = LocalizationService.Instance;
 
-            MetricItem Pct(string f, string cp, string v)  => new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "100%" };
-            MetricItem Temp(string f, string cp, string v) => new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "100°" };
+            MetricItem Pct(string f, string cp, string v, float percent, MetricSection section) =>
+                new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "100%", Percent01 = Math.Clamp(percent / 100f, 0f, 1f), Section = section };
+            MetricItem Temp(string f, string cp, string v, MetricSection section) =>
+                new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "100°", Section = section };
             // Reserve "1023 MB/s": widest net format before switching to GB/s (M glyph is wider than K)
-            MetricItem Net(string f, string cp, string v)  => new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "1023 MB/s" };
+            MetricItem Net(string f, string cp, string v, MetricSection section) =>
+                new MetricItem { Label = compact ? cp : f, Value = v, Reserve = "1023 MB/s", Section = section };
 
             var list = new System.Collections.Generic.List<(MetricItem?, MetricItem?)>();
 
             if (c.ShowNetUp || c.ShowNetDown)
                 list.Add((
-                    c.ShowNetUp ? Net(L["Overlay.Label.Up"], L["Overlay.Label.Compact.Up"], m.NetUpText) : null,
-                    c.ShowNetDown ? Net(L["Overlay.Label.Down"], L["Overlay.Label.Compact.Down"], m.NetDownText) : null));
+                    c.ShowNetUp ? Net(L["Overlay.Label.Up"], L["Overlay.Label.Compact.Up"], m.NetUpText, MetricSection.Net) : null,
+                    c.ShowNetDown ? Net(L["Overlay.Label.Down"], L["Overlay.Label.Compact.Down"], m.NetDownText, MetricSection.Net) : null));
 
             if (c.ShowCpu || c.ShowRam)
                 list.Add((
-                    c.ShowCpu ? Pct(L["Overlay.Label.Cpu"], L["Overlay.Label.Compact.Cpu"], $"{(int)m.CpuUsage}%") : null,
-                    c.ShowRam ? Pct(L["Overlay.Label.Ram"], L["Overlay.Label.Compact.Ram"], $"{(int)m.RamPercent}%") : null));
+                    c.ShowCpu ? Pct(L["Overlay.Label.Cpu"], L["Overlay.Label.Compact.Cpu"], $"{(int)m.CpuUsage}%", m.CpuUsage, MetricSection.CpuRam) : null,
+                    c.ShowRam ? Pct(L["Overlay.Label.Ram"], L["Overlay.Label.Compact.Ram"], $"{(int)m.RamPercent}%", m.RamPercent, MetricSection.CpuRam) : null));
 
             string tempStr = m.GpuTemperature > 0 ? $"{(int)m.GpuTemperature}°" : L["Overlay.Label.Na"];
             if (c.ShowGpu || c.ShowTemp)
                 list.Add((
-                    c.ShowGpu ? Pct(L["Overlay.Label.Gpu"], L["Overlay.Label.Compact.Gpu"], $"{(int)m.GpuUsage}%") : null,
-                    c.ShowTemp ? Temp(L["Overlay.Label.Temp"], L["Overlay.Label.Compact.Temp"], tempStr) : null));
+                    c.ShowGpu ? Pct(L["Overlay.Label.Gpu"], L["Overlay.Label.Compact.Gpu"], $"{(int)m.GpuUsage}%", m.GpuUsage, MetricSection.Gpu) : null,
+                    c.ShowTemp ? Temp(L["Overlay.Label.Temp"], L["Overlay.Label.Compact.Temp"], tempStr, MetricSection.Gpu) : null));
 
             if (c.ShowDisk || c.ShowDiskSpeed)
             {
@@ -1324,8 +1359,8 @@ namespace Kil0bitSystemMonitor
                         string cdkLabel = L.Format("Overlay.Label.Disk", letter.ToUpper());
 
                         list.Add((
-                            c.ShowDisk ? Pct(cdkLabel, letter, $"{(int)d.SpacePercent}%") : null,
-                            c.ShowDiskSpeed ? Pct(L["Overlay.Label.Speed"], L["Overlay.Label.Compact.Speed"], $"{(int)d.ActivityPercent}%") : null
+                            c.ShowDisk ? Pct(cdkLabel, letter, $"{(int)d.SpacePercent}%", d.SpacePercent, MetricSection.Disk) : null,
+                            c.ShowDiskSpeed ? Pct(L["Overlay.Label.Speed"], L["Overlay.Label.Compact.Speed"], $"{(int)d.ActivityPercent}%", d.ActivityPercent, MetricSection.Disk) : null
                         ));
                     }
                 }
@@ -1355,10 +1390,13 @@ namespace Kil0bitSystemMonitor
             _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose();
             _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose();
             _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose();
+            _cachedWarningBrush?.Dispose(); _cachedCriticalBrush?.Dispose();
             _cachedBgBrush = new SolidBrush(HexToColor(_config.Config.BackgroundColorHex ?? "#B4141414"));
             _cachedAccentBrush = new SolidBrush(HexToColor(_config.Config.AccentColorHex ?? "#FFFFFF"));
             _cachedLabelBrush = new SolidBrush(HexToColor(_config.Config.LabelColorHex ?? "#00CCFF"));
             _cachedPodBrush = new SolidBrush(HexToColor(_config.Config.PodColorHex ?? "#0FFFFFFF"));
+            _cachedWarningBrush = new SolidBrush(HexToColor(_config.Config.WarningColorHex ?? MetricAlertDefaults.WarningColorHex));
+            _cachedCriticalBrush = new SolidBrush(HexToColor(_config.Config.CriticalColorHex ?? MetricAlertDefaults.CriticalColorHex));
             _cachedHoverPen = new Pen(Color.FromArgb(20, 255, 255, 255));
             _cachedHoverBrush = new SolidBrush(Color.FromArgb(25, 255, 255, 255));
             // Per-section label brushes: only create if a custom color is set
@@ -1405,7 +1443,7 @@ namespace Kil0bitSystemMonitor
                     try { _processListWindow?.Close(); } catch { }
                     _processListWindow = null;
                 });
-                _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); _dragAnimTimer?.Stop(); UnregisterShellHook(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); _hWnd = IntPtr.Zero; if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);
+                _telemetry.MetricsUpdated -= _onMetricsUpdated; _config.Config.PropertyChanged -= _onConfigPropertyChanged; _zOrderTimer?.Dispose(); _fadeTimer?.Stop(); _dragAnimTimer?.Stop(); UnregisterShellHook(); UnregisterAppBar(); ClearCaches(); _offscreenGraphics?.Dispose(); _offscreenBitmap?.Dispose(); _cachedBgBrush?.Dispose(); _cachedAccentBrush?.Dispose(); _cachedLabelBrush?.Dispose(); _cachedPodBrush?.Dispose(); _cachedHoverPen?.Dispose(); _cachedHoverBrush?.Dispose(); _cachedNetLabelBrush?.Dispose(); _cachedCpuRamLabelBrush?.Dispose(); _cachedGpuLabelBrush?.Dispose(); _cachedDiskLabelBrush?.Dispose(); _cachedNetAccentBrush?.Dispose(); _cachedCpuRamAccentBrush?.Dispose(); _cachedGpuAccentBrush?.Dispose(); _cachedDiskAccentBrush?.Dispose(); _cachedWarningBrush?.Dispose(); _cachedCriticalBrush?.Dispose(); if (_hWnd != IntPtr.Zero) DestroyWindow(_hWnd); _hWnd = IntPtr.Zero; if (_hIcon != IntPtr.Zero) DestroyIcon(_hIcon);
             }
             catch { }
         }

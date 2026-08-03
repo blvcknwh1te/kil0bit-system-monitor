@@ -1,4 +1,4 @@
-<Window
+﻿<Window
     x:Class="Kil0bitSystemMonitor.SettingsWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -11,12 +11,68 @@
     Height="720" Width="1000"
     WindowStartupLocation="CenterScreen"
     Background="{DynamicResource SystemControlPageBackgroundAltHighBrush}"
-    xmlns:sys="clr-namespace:System;assembly=mscorlib"
+    xmlns:sys="clr-namespace:System;assembly=System.Runtime"
     ui:WindowHelper.UseModernWindowStyle="True"
     ui:ThemeManager.RequestedTheme="Dark">
     
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+
+        <!-- Единые токены раскладки настроек (все вкладки / локали) -->
+        <Thickness x:Key="SettingsPageMargin">24</Thickness>
+        <Thickness x:Key="SettingsCardMargin">0,0,0,12</Thickness>
+        <Thickness x:Key="SettingsCardPadding">16,4</Thickness>
+        <Thickness x:Key="SettingsIconGap">0,0,16,0</Thickness>
+        <Thickness x:Key="SettingsTextControlGap">0,0,16,0</Thickness>
+        <Thickness x:Key="SettingsFieldLabelMargin">0,0,0,8</Thickness>
+        <sys:Double x:Key="SettingsSectionTitleSize">28</sys:Double>
+        <sys:Double x:Key="SettingsControlMinWidth">200</sys:Double>
+        <sys:Double x:Key="SettingsColorButtonHeight">36</sys:Double>
+        <sys:Double x:Key="SettingsSwatchSize">18</sys:Double>
+
+        <Style x:Key="SettingsSectionTitleStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="28"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Margin" Value="0,0,0,16"/>
+            <Setter Property="TextWrapping" Value="NoWrap"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+        </Style>
+        <Style x:Key="SettingsCardStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource SystemControlElevationBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="8"/>
+            <Setter Property="Margin" Value="{StaticResource SettingsCardMargin}"/>
+            <Setter Property="Padding" Value="{StaticResource SettingsCardPadding}"/>
+        </Style>
+        <Style x:Key="SettingsFieldLabelStyle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Opacity" Value="0.7"/>
+            <Setter Property="Margin" Value="{StaticResource SettingsFieldLabelMargin}"/>
+        </Style>
+        <Style x:Key="SettingsControlStyle" TargetType="FrameworkElement">
+            <Setter Property="MinWidth" Value="{StaticResource SettingsControlMinWidth}"/>
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        </Style>
+        <Style x:Key="SettingsComboStyle" TargetType="ComboBox" BasedOn="{StaticResource {x:Type ComboBox}}">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="SettingsToggleStyle" TargetType="ui:ToggleSwitch">
+            <Setter Property="OnContent" Value=""/>
+            <Setter Property="OffContent" Value=""/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Width" Value="44"/>
+            <Setter Property="MinWidth" Value="44"/>
+            <Setter Property="MaxWidth" Value="44"/>
+        </Style>
+        <Style x:Key="SettingsColorButtonStyle" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+            <Setter Property="HorizontalAlignment" Value="Stretch"/>
+            <Setter Property="Height" Value="{StaticResource SettingsColorButtonHeight}"/>
+            <Setter Property="Margin" Value="0,0,0,12"/>
+        </Style>
     </Window.Resources>
 
     <Grid x:Name="SettingsRoot" Loaded="SettingsRoot_Loaded">
@@ -62,7 +118,7 @@
             </ui:NavigationView.MenuItems>
 
             <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-                <StackPanel MaxWidth="800" HorizontalAlignment="Left" Margin="24">
+                <StackPanel MaxWidth="800" HorizontalAlignment="Stretch" Margin="{StaticResource SettingsPageMargin}" Grid.IsSharedSizeScope="True">
                     <!-- Home Section -->
                     <StackPanel x:Name="HomeSection" Visibility="Visible">
                         <StackPanel Margin="0,0,0,32">
@@ -171,139 +227,122 @@
 
                     <!-- General Section -->
                     <StackPanel x:Name="GeneralSection" Visibility="Collapsed">
-                        <TextBlock Text="General" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,24"/>
+                        <TextBlock Text="General" Style="{StaticResource SettingsSectionTitleStyle}"/>
                         
-                        <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="16" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-
-                            <!-- Column 0 -->
-                            <Border Grid.Row="0" Grid.Column="0" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE7B3;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Show Overlay" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                                        <TextBlock Text="Enable or disable the monitor." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.ShowOverlay, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
-                                </Grid>
-                            </Border>
-
-                            <Border Grid.Row="1" Grid.Column="0" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE718;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Lock Position" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                                        <TextBlock Text="Prevent accidental dragging." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.LockPosition, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
-                                </Grid>
-                            </Border>
-
-                            <Border Grid.Row="2" Grid.Column="0" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE72A;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Run at Startup" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                                        <TextBlock Text="Launch with Windows." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.LaunchOnStartup, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
-                                </Grid>
-                            </Border>
-
-                            <!-- Column 2 -->
-                            <Border Grid.Row="0" Grid.Column="2" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE740;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Hide in Fullscreen" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                                        <TextBlock Text="Hide during games/movies." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.HideOnFullscreen, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
-                                </Grid>
-                            </Border>
-
-                            <Border Grid.Row="1" Grid.Column="2" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE90E;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Snap to Taskbar" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                                        <TextBlock Text="Dock to the taskbar area." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.StickToTaskbar, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
-                                </Grid>
-                            </Border>
-
-                            <Border Grid.Row="2" Grid.Column="2" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
-                                <Grid>
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="Auto" />
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE819;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
-                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
-                                        <TextBlock Text="Keep on Top" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
-                                        <TextBlock Text="Stay above other windows." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.AlwaysOnTop, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
-                                </Grid>
-                            </Border>
-
-                            <!-- Row 3: Performance -->
-                            <Border Grid.Row="3" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,4,0,12" Padding="20,16">
+                        <StackPanel Grid.IsSharedSizeScope="True">
+<!-- Column 0 -->
+                            <Border Style="{StaticResource SettingsCardStyle}">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="200" />
                                     </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE916;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <ui:FontIcon Glyph="&#xE7B3;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Show Overlay" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Enable or disable the monitor." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.ShowOverlay, Mode=TwoWay}"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE718;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Lock Position" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Prevent accidental dragging." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.LockPosition, Mode=TwoWay}"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE72A;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Run at Startup" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Launch with Windows." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.LaunchOnStartup, Mode=TwoWay}"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- Column 2 -->
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE740;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Hide in Fullscreen" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Hide during games/movies." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.HideOnFullscreen, Mode=TwoWay}"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE90E;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Snap to Taskbar" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Dock to the taskbar area." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.StickToTaskbar, Mode=TwoWay}"/>
+                                </Grid>
+                            </Border>
+
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE819;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                                        <TextBlock Text="Keep on Top" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="Stay above other windows." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.AlwaysOnTop, Mode=TwoWay}"/>
+                                </Grid>
+                            </Border>
+
+                            <!-- Row 3: Performance -->
+                            <Border Style="{StaticResource SettingsCardStyle}">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="200" />
+                                    </Grid.ColumnDefinitions>
+                                    <ui:FontIcon Glyph="&#xE916;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                                         <TextBlock Text="Refresh Rate" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Set how often the monitor updates its metrics." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
                                     
-                                    <ComboBox Grid.Column="2" SelectedValue="{Binding Config.UpdateInterval, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                    <ComboBox Grid.Column="2" SelectedValue="{Binding Config.UpdateInterval, Mode=TwoWay}" SelectedValuePath="Tag" Style="{StaticResource SettingsComboStyle}">
                                         <ComboBoxItem Content="500ms (High Performance)">
                                             <ComboBoxItem.Tag>
                                                 <sys:Int32>500</sys:Int32>
@@ -329,19 +368,19 @@
                             </Border>
 
                             <!-- Row 4: Process list default sort -->
-                            <Border Grid.Row="4" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                            <Border Style="{StaticResource SettingsCardStyle}">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="200" />
                                     </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE8CB;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <ui:FontIcon Glyph="&#xE8CB;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                                         <TextBlock Text="Process List Sort" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Default sort when opening the process list from the overlay." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ComboBox x:Name="ProcessSortCombo" Grid.Column="2" SelectedValue="{Binding Config.ProcessListSortColumn, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="ProcessSortCombo_SelectionChanged">
+                                    <ComboBox Grid.Column="2" x:Name="ProcessSortCombo" SelectedValue="{Binding Config.ProcessListSortColumn, Mode=TwoWay}" SelectedValuePath="Tag" Style="{StaticResource SettingsComboStyle}" SelectionChanged="ProcessSortCombo_SelectionChanged">
                                         <ComboBoxItem Content="Name" Tag="Name"/>
                                         <ComboBoxItem Content="CPU" Tag="Cpu"/>
                                         <ComboBoxItem Content="Memory" Tag="Memory"/>
@@ -352,36 +391,36 @@
                             </Border>
 
                             <!-- Row 5: Process list icons -->
-                            <Border Grid.Row="5" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                            <Border Style="{StaticResource SettingsCardStyle}">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="200" />
                                     </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE8B9;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <ui:FontIcon Glyph="&#xE8B9;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                                         <TextBlock Text="Show Process Icons" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Show application icons in the process list." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.ProcessListShowIcons, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.ProcessListShowIcons, Mode=TwoWay}"/>
                                 </Grid>
                             </Border>
 
                             <!-- Row 6: Overlay click mode -->
-                            <Border Grid.Row="6" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                            <Border Style="{StaticResource SettingsCardStyle}">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="260" />
+                                        <ColumnDefinition Width="200" />
                                     </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE8B0;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <ui:FontIcon Glyph="&#xE8B0;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                                         <TextBlock Text="Overlay Click Action" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Single click opens process list, or double-click opens Task Manager." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ComboBox x:Name="OverlayClickModeCombo" Grid.Column="2" SelectedValue="{Binding Config.OverlayClickMode, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" VerticalAlignment="Center">
+                                    <ComboBox Grid.Column="2" x:Name="OverlayClickModeCombo" SelectedValue="{Binding Config.OverlayClickMode, Mode=TwoWay}" SelectedValuePath="Tag" Style="{StaticResource SettingsComboStyle}">
                                         <ComboBoxItem Content="Click → Process list" Tag="ProcessList"/>
                                         <ComboBoxItem Content="Double-click → Task Manager" Tag="TaskManager"/>
                                     </ComboBox>
@@ -389,19 +428,19 @@
                             </Border>
 
                             <!-- Row 7: Language -->
-                            <Border Grid.Row="7" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                            <Border Style="{StaticResource SettingsCardStyle}">
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="200" />
                                     </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE775;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <ui:FontIcon Glyph="&#xE775;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                                         <TextBlock Text="Language" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Interface language for settings, menus, and process list." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ComboBox x:Name="LanguageCombo" Grid.Column="2" SelectedValue="{Binding Config.Language, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Stretch" VerticalAlignment="Center" SelectionChanged="LanguageCombo_SelectionChanged">
+                                    <ComboBox Grid.Column="2" x:Name="LanguageCombo" SelectedValue="{Binding Config.Language, Mode=TwoWay}" SelectedValuePath="Tag" Style="{StaticResource SettingsComboStyle}" SelectionChanged="LanguageCombo_SelectionChanged">
                                         <ComboBoxItem Content="English" Tag="en"/>
                                         <ComboBoxItem Content="Русский" Tag="ru"/>
                                     </ComboBox>
@@ -409,7 +448,7 @@
                             </Border>
 
                             <!-- Row 8: Debug log -->
-                            <Border Grid.Row="8" Grid.ColumnSpan="3" Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,0,0,12" Padding="20,16">
+                            <Border Style="{StaticResource SettingsCardStyle}">
                                 <Grid>
                                     <Grid.RowDefinitions>
                                         <RowDefinition Height="Auto"/>
@@ -418,18 +457,18 @@
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="Auto" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="200" />
                                     </Grid.ColumnDefinitions>
-                                    <ui:FontIcon Glyph="&#xE7BA;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,20,0" VerticalAlignment="Center"/>
+                                    <ui:FontIcon Glyph="&#xE7BA;" FontSize="20" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="{StaticResource SettingsIconGap}" VerticalAlignment="Center"/>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
                                         <TextBlock Text="Debug Log" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="Write diagnostic events (clicks, coordinates) to log/ folder. Off by default." Opacity="0.6" FontSize="12.5" TextWrapping="Wrap"/>
                                     </StackPanel>
-                                    <ui:ToggleSwitch Grid.Column="2" HorizontalAlignment="Right" IsOn="{Binding Config.DebugLogEnabled, Mode=TwoWay}" VerticalAlignment="Center" OnContent="" OffContent=""/>
+                                    <ui:ToggleSwitch Grid.Column="2" Style="{StaticResource SettingsToggleStyle}" IsOn="{Binding Config.DebugLogEnabled, Mode=TwoWay}"/>
 
                                     <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,12,0,0">
                                         <TextBlock Text="Clear log after" FontWeight="SemiBold" FontSize="13" Margin="0,0,0,6"/>
-                                        <ComboBox x:Name="DebugLogRetentionCombo" SelectedValue="{Binding Config.DebugLogRetention, Mode=TwoWay}" SelectedValuePath="Tag" HorizontalAlignment="Left" MinWidth="200">
+                                        <ComboBox x:Name="DebugLogRetentionCombo" SelectedValue="{Binding Config.DebugLogRetention, Mode=TwoWay}" SelectedValuePath="Tag" Style="{StaticResource SettingsComboStyle}" HorizontalAlignment="Right">
                                             <ComboBoxItem Content="1 day" Tag="Day"/>
                                             <ComboBoxItem Content="1 week" Tag="Week"/>
                                             <ComboBoxItem Content="1 month" Tag="Month"/>
@@ -437,17 +476,17 @@
                                     </StackPanel>
                                 </Grid>
                             </Border>
-                        </Grid>
+                        </StackPanel>
                     </StackPanel>
 
                     <!-- Monitoring Section -->
                     <StackPanel x:Name="MonitoringSection" Visibility="Collapsed">
-                        <TextBlock Text="Monitoring" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,24"/>
+                        <TextBlock Text="Monitoring" Style="{StaticResource SettingsSectionTitleStyle}"/>
                         
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="1.5*" />
-                                <ColumnDefinition Width="24" />
+                                <ColumnDefinition Width="16" />
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
@@ -474,21 +513,25 @@
                                                     <ui:FontIcon Glyph="&#xE734;" FontSize="16" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                                                     <TextBlock Text="Processor &amp; Memory" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                 </StackPanel>
-                                                <Grid Margin="0,0,0,12">
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="CPU Usage" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowCpu, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="CPU Usage" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowCpu, Mode=TwoWay}"/>
                                                 </Grid>
-                                                <Grid>
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="RAM Usage" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowRam, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="RAM Usage" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowRam, Mode=TwoWay}"/>
                                                 </Grid>
                                             </StackPanel>
 
@@ -497,21 +540,25 @@
                                                     <ui:FontIcon Glyph="&#xE7AD;" FontSize="16" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                                                     <TextBlock Text="Graphics &amp; Thermals" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                 </StackPanel>
-                                                <Grid Margin="0,0,0,12">
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="GPU Usage" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowGpu, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="GPU Usage" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowGpu, Mode=TwoWay}"/>
                                                 </Grid>
-                                                <Grid>
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="GPU Temperature" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowTemp, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="GPU Temperature" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowTemp, Mode=TwoWay}"/>
                                                 </Grid>
                                             </StackPanel>
                                         </Grid>
@@ -531,21 +578,25 @@
                                                     <ui:FontIcon Glyph="&#xE774;" FontSize="16" Foreground="{DynamicResource SystemAccentColorBrush}" Margin="0,0,8,0" VerticalAlignment="Center"/>
                                                     <TextBlock Text="Data &amp; Connectivity" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                 </StackPanel>
-                                                <Grid Margin="0,0,0,12">
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="Upload Speed" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowNetUp, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="Upload Speed" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowNetUp, Mode=TwoWay}"/>
                                                 </Grid>
-                                                <Grid>
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="Download Speed" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowNetDown, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="Download Speed" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowNetDown, Mode=TwoWay}"/>
                                                 </Grid>
                                             </StackPanel>
 
@@ -555,21 +606,25 @@
                                                     <TextBlock Text="Storage Activity" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                                 </StackPanel>
                                                 
-                                                <Grid Margin="0,0,0,12">
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="Used Space %" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowDisk, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="Used Space %" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowDisk, Mode=TwoWay}"/>
                                                 </Grid>
-                                                <Grid>
+                                                <Grid Margin="0,0,0,8">
                                                     <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="130" />
-                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="44"/>
                                                     </Grid.ColumnDefinitions>
-                                                    <TextBlock Text="Real-time Activity" VerticalAlignment="Center" Opacity="0.8"/>
-                                                    <ui:ToggleSwitch Grid.Column="1" IsOn="{Binding Config.ShowDiskSpeed, Mode=TwoWay}" OnContent="" OffContent="" Margin="10,0,0,0" />
+                                                    <TextBlock Text="Real-time Activity" VerticalAlignment="Center" Opacity="0.8"
+                                                               TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,0,8,0"/>
+                                                    <ui:ToggleSwitch Grid.Column="1" Style="{StaticResource SettingsToggleStyle}"
+                                                                     IsOn="{Binding Config.ShowDiskSpeed, Mode=TwoWay}"/>
                                                 </Grid>
                                             </StackPanel>
                                         </Grid>
@@ -579,7 +634,7 @@
 
                             <!-- Right: Hardware Selection & Advanced -->
                             <StackPanel Grid.Column="2">
-                                <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <Border Style="{StaticResource SettingsCardStyle}">
                                     <StackPanel>
                                         <TextBlock Text="Hardware Selection" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,16"/>
                                         
@@ -615,7 +670,7 @@
                     </StackPanel>
 
                     <StackPanel x:Name="AppearanceSection" Visibility="Collapsed">
-                        <TextBlock Text="Appearance" FontSize="28" FontWeight="SemiBold" Margin="0,0,0,24"/>
+                        <TextBlock Text="Appearance" Style="{StaticResource SettingsSectionTitleStyle}"/>
                         
                         <Grid>
                             <Grid.ColumnDefinitions>
@@ -628,7 +683,7 @@
 
                             <!-- Column 1: Typography & Style -->
                             <StackPanel Grid.Column="0">
-                                <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,0,0,16">
+                                <Border Style="{StaticResource SettingsCardStyle}">
                                     <StackPanel>
                                         <TextBlock Text="Typography" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,12"/>
                                         
@@ -654,7 +709,7 @@
 
                             <!-- Column 2: Color Palette -->
                             <StackPanel Grid.Column="2">
-                                <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                                <Border Style="{StaticResource SettingsCardStyle}">
                                     <StackPanel>
                                         <TextBlock Text="Color Palette" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,12"/>
                                         
@@ -699,7 +754,7 @@
 
                             <!-- Column 3: Scaling & Background -->
                             <StackPanel Grid.Column="4">
-                                <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16">
+                                <Border Style="{StaticResource SettingsCardStyle}">
                                     <StackPanel>
                                         <TextBlock Text="Dashboard" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,12"/>
 
@@ -729,8 +784,73 @@
                             </StackPanel>
                         </Grid>
 
+                        <!-- Value Alerts: пороги % и цвета warning/critical -->
+                        <Border Style="{StaticResource SettingsCardStyle}" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Value Alerts" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,4"/>
+                                <TextBlock Text="Percentage metrics (CPU, RAM, GPU, Disk) use these thresholds and colors." Opacity="0.6" FontSize="12" Margin="0,0,0,16" TextWrapping="Wrap"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="16"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0">
+                                        <TextBlock Text="Warning Threshold" Style="{StaticResource SettingsFieldLabelStyle}"/>
+                                        <Grid Margin="0,0,0,12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Slider Minimum="1" Maximum="99" TickFrequency="1" IsSnapToTickEnabled="True"
+                                                    Value="{Binding Config.WarningThresholdPercent, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" MinWidth="40"
+                                                       Text="{Binding Config.WarningThresholdPercent, StringFormat={}{0}%}"/>
+                                        </Grid>
+                                        <TextBlock Text="Warning Color" Style="{StaticResource SettingsFieldLabelStyle}"/>
+                                        <Button Style="{StaticResource SettingsColorButtonStyle}" Click="ColorButton_Click" Tag="Warning" Margin="0">
+                                            <Grid HorizontalAlignment="Stretch">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="{StaticResource SettingsSwatchSize}" Height="{StaticResource SettingsSwatchSize}" CornerRadius="3"
+                                                        Background="{Binding Config.WarningColorHex}" BorderBrush="White" BorderThickness="1"/>
+                                                <TextBlock Grid.Column="1" Text="Select Warning" Margin="8,0" VerticalAlignment="Center" FontSize="12"/>
+                                            </Grid>
+                                        </Button>
+                                    </StackPanel>
+                                    <StackPanel Grid.Column="2">
+                                        <TextBlock Text="Critical Threshold" Style="{StaticResource SettingsFieldLabelStyle}"/>
+                                        <Grid Margin="0,0,0,12">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Slider Minimum="1" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                                    Value="{Binding Config.CriticalThresholdPercent, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" MinWidth="40"
+                                                       Text="{Binding Config.CriticalThresholdPercent, StringFormat={}{0}%}"/>
+                                        </Grid>
+                                        <TextBlock Text="Critical Color" Style="{StaticResource SettingsFieldLabelStyle}"/>
+                                        <Button Style="{StaticResource SettingsColorButtonStyle}" Click="ColorButton_Click" Tag="Critical" Margin="0">
+                                            <Grid HorizontalAlignment="Stretch">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <Border Width="{StaticResource SettingsSwatchSize}" Height="{StaticResource SettingsSwatchSize}" CornerRadius="3"
+                                                        Background="{Binding Config.CriticalColorHex}" BorderBrush="White" BorderThickness="1"/>
+                                                <TextBlock Grid.Column="1" Text="Select Critical" Margin="8,0" VerticalAlignment="Center" FontSize="12"/>
+                                            </Grid>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
                         <!-- Section Colors -->
-                        <Border Background="{DynamicResource SystemControlBackgroundChromeMediumLowBrush}" BorderBrush="{DynamicResource SystemControlElevationBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,16,0,0">
+                        <Border Style="{StaticResource SettingsCardStyle}" Margin="0,16,0,0">
                             <StackPanel>
                                 <TextBlock Text="Section Colors" FontWeight="SemiBold" FontSize="14" Margin="0,0,0,4"/>
                                 <TextBlock Text="Override label and metric colors per section. Leave unset to inherit global colors." Opacity="0.6" FontSize="12" Margin="0,0,0,16" TextWrapping="Wrap"/>
@@ -879,7 +999,7 @@
 
                     <!-- About Section -->
                     <StackPanel x:Name="AboutSection" Visibility="Collapsed">
-                        <TextBlock Text="About" Foreground="#00CCFF" FontSize="20" Margin="0,0,0,16"/>
+                        <TextBlock Text="About" Style="{StaticResource SettingsSectionTitleStyle}"/>
                         
                         <StackPanel Margin="0,0,0,12">
                             <TextBlock Text="Kil0bit System Monitor" FontWeight="Bold" FontSize="18"/>
@@ -901,8 +1021,8 @@
                         </UniformGrid>
 
                         <StackPanel Margin="0,30,0,0" Opacity="0.6">
-                            <TextBlock Text="Built with ❤️ by KB - kil0bit" HorizontalAlignment="Center" FontSize="12"/>
-                            <TextBlock Text="© 2026 Kil0bit System Monitor" HorizontalAlignment="Center" FontSize="11" Margin="0,2,0,0"/>
+                            <TextBlock Text="Built with вќ¤пёЏ by KB - kil0bit" HorizontalAlignment="Center" FontSize="12"/>
+                            <TextBlock Text="В© 2026 Kil0bit System Monitor" HorizontalAlignment="Center" FontSize="11" Margin="0,2,0,0"/>
                         </StackPanel>
                     </StackPanel>
                 </StackPanel>
@@ -939,3 +1059,4 @@
         </Border>
     </Grid>
 </Window>
+

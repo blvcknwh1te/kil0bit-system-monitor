@@ -1,3 +1,4 @@
+using System;
 using System.Windows.Media;
 using System.Linq;
 
@@ -81,6 +82,12 @@ namespace Kil0bitSystemMonitor.Models
         private string? _cpuRamAccentColorHex = null;
         private string? _gpuAccentColorHex = null;
         private string? _diskAccentColorHex = null;
+
+        private double _warningThreshold = MetricAlertDefaults.WarningThreshold;
+        private double _criticalThreshold = MetricAlertDefaults.CriticalThreshold;
+        private string _warningColorHex = MetricAlertDefaults.WarningColorHex;
+        private string _criticalColorHex = MetricAlertDefaults.CriticalColorHex;
+
         public bool ShowOverlay { get => _showOverlay; set { _showOverlay = value; OnPropertyChanged(); } }
         public bool LockPosition { get => _lockPosition; set { _lockPosition = value; OnPropertyChanged(); } }
         public bool LaunchOnStartup { get => _launchOnStartup; set { _launchOnStartup = value; OnPropertyChanged(); } }
@@ -192,6 +199,64 @@ namespace Kil0bitSystemMonitor.Models
         public string? CpuRamAccentColorHex { get => _cpuRamAccentColorHex; set { _cpuRamAccentColorHex = value; OnPropertyChanged(); } }
         public string? GpuAccentColorHex { get => _gpuAccentColorHex; set { _gpuAccentColorHex = value; OnPropertyChanged(); } }
         public string? DiskAccentColorHex { get => _diskAccentColorHex; set { _diskAccentColorHex = value; OnPropertyChanged(); } }
+
+        /// <summary>Доля 0–1: значения ≥ порога — warning (ниже critical).</summary>
+        public double WarningThreshold
+        {
+            get => _warningThreshold;
+            set
+            {
+                double v = Math.Clamp(value, 0, 1);
+                if (v >= _criticalThreshold)
+                    v = Math.Max(0, _criticalThreshold - 0.01);
+                if (Math.Abs(_warningThreshold - v) < 0.0001) return;
+                _warningThreshold = v;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(WarningThresholdPercent));
+            }
+        }
+
+        /// <summary>Доля 0–1: значения ≥ порога — critical.</summary>
+        public double CriticalThreshold
+        {
+            get => _criticalThreshold;
+            set
+            {
+                double v = Math.Clamp(value, 0, 1);
+                if (v <= _warningThreshold)
+                    v = Math.Min(1, _warningThreshold + 0.01);
+                if (Math.Abs(_criticalThreshold - v) < 0.0001) return;
+                _criticalThreshold = v;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CriticalThresholdPercent));
+            }
+        }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public double WarningThresholdPercent
+        {
+            get => Math.Round(WarningThreshold * 100);
+            set => WarningThreshold = value / 100.0;
+        }
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public double CriticalThresholdPercent
+        {
+            get => Math.Round(CriticalThreshold * 100);
+            set => CriticalThreshold = value / 100.0;
+        }
+
+        public string WarningColorHex
+        {
+            get => _warningColorHex;
+            set { if (_warningColorHex == value) return; _warningColorHex = value; OnPropertyChanged(); }
+        }
+
+        public string CriticalColorHex
+        {
+            get => _criticalColorHex;
+            set { if (_criticalColorHex == value) return; _criticalColorHex = value; OnPropertyChanged(); }
+        }
 
         public double X { get => _x; set { _x = value; OnPropertyChanged(); } }
         public double Y { get => _y; set { _y = value; OnPropertyChanged(); } }

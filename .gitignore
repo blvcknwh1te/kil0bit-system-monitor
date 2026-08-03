@@ -492,6 +492,7 @@ kil0bit-system-monitor/config.json
 
 # Gemini / Agent artifacts
 .gemini/
+.cursor/
 .idea/
 .vscode/
 bin/
@@ -500,6 +501,3 @@ obj/
 # App debug logs
 log/
 **/log/debug-*.log
-
-# Исключение: выход Release-сборки не игнорировать
-###
