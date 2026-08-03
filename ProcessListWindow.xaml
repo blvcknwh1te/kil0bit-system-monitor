@@ -22,7 +22,11 @@
             BorderBrush="#55FFFFFF"
             BorderThickness="1"
             CornerRadius="8"
-            Padding="0">
+            Padding="0"
+            RenderTransformOrigin="0.5,1">
+        <Border.RenderTransform>
+            <TranslateTransform x:Name="RootSlide" Y="10"/>
+        </Border.RenderTransform>
         <DockPanel>
             <Border DockPanel.Dock="Top" Padding="12,8,8,8" BorderBrush="#33FFFFFF" BorderThickness="0,0,0,1">
                 <Grid>

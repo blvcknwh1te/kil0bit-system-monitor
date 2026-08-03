@@ -55,6 +55,8 @@ namespace Kil0bitSystemMonitor
         private const double DragEaseSeconds = 0.13;
         private const double DragEaseTau = DragEaseSeconds / 3.0;
         private ProcessListWindow? _processListWindow;
+        /// <summary>Клик по оверлею уже закрыл popup через hook — не открывать снова на UP.</summary>
+        private bool _suppressProcessListOpen;
 
         // Visibility / fade state
         private byte _currentAlpha = 255;
@@ -133,7 +135,7 @@ namespace Kil0bitSystemMonitor
                 wc.style = 0x0008;
                 wc.lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_wndProc);
                 wc.hInstance = GetModuleHandle(null);
-                wc.lpszClassName = "Kil0bitOverlayWndClass_Main";
+                wc.lpszClassName = OverlayPopupLayout.OverlayWindowClass;
                 wc.hCursor = LoadCursor(IntPtr.Zero, 32512);
 
                 try
@@ -154,7 +156,7 @@ namespace Kil0bitSystemMonitor
                 int y = (int)_config.Config.Y;
                 if (x < -10000 || x > 10000 || y < -10000 || y > 10000) { x = 100; y = 100; }
 
-                _hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "Kil0bitOverlayWndClass_Main", "Kil0bit System Monitor Overlay", WS_POPUP, x, y, 300, 32, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
+                _hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, OverlayPopupLayout.OverlayWindowClass, "Kil0bit System Monitor Overlay", WS_POPUP, x, y, 300, 32, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
                 if (_hWnd == IntPtr.Zero) throw new Exception("Failed to create window");
 
                 if (_hIcon != IntPtr.Zero) { SendMessage(_hWnd, WM_SETICON, (IntPtr)ICON_BIG, _hIcon); SendMessage(_hWnd, WM_SETICON, (IntPtr)ICON_SMALL, _hIcon); }
@@ -165,7 +167,7 @@ namespace Kil0bitSystemMonitor
 
                 // Disable DWM animations to prevent flickering during Task View zoom transitions
                 int disableTransitions = 1;
-                Win32Helper.DwmSetWindowAttribute(_hWnd, 3, ref disableTransitions, sizeof(int));
+                OsCompat.SafeDwmSetWindowAttribute(_hWnd, 3, ref disableTransitions);
 
                 if (_config.Config.StickToTaskbar)
                     AttachToTaskbar();
@@ -264,51 +266,59 @@ namespace Kil0bitSystemMonitor
         }
 
         /// <summary>
-        /// При клике по таскбару shell поднимает его над TOPMOST — HWND_TOPMOST в ответ даёт мигание.
-        /// Ставим оверлей сразу над таскбаром в той же topmost-ленте.
+        /// При клике по таскбару shell поднимает его над TOPMOST.
+        /// Детект перекрытия — WindowFromPoint по центру оверлея (надёжнее class FG / GW_HWNDPREV).
         /// </summary>
         private void ReassertZOrder()
+        {
+            try
+            {
+                ReassertZOrderCore();
+            }
+            catch (Exception ex)
+            {
+                DebugLogger.Error("Overlay.ZOrder", ex.Message);
+            }
+        }
+
+        private void ReassertZOrderCore()
         {
             if (_disposing || !_overlayVisible || _hWnd == IntPtr.Zero || !IsWindow(_hWnd))
                 return;
 
             IntPtr fg = GetForegroundWindow();
-            var sb = new StringBuilder(256);
-            Win32Helper.GetClassName(fg, sb, sb.Capacity);
-            string fgClass = sb.ToString();
-            bool taskbarFg = fgClass is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+            bool taskbarFg = IsTaskbarRoot(ResolveTaskbarRoot(fg));
+            bool occluded = TryGetOccludingTaskbar(out IntPtr occludingBar);
 
             if (_config.Config.AlwaysOnTop)
             {
                 long ex = Win32Helper.GetWindowLong(_hWnd, Win32Helper.GWL_EXSTYLE);
                 bool isTopMost = (ex & Win32Helper.WS_EX_TOPMOST) != 0;
-                IntPtr prev = GetWindow(_hWnd, GW_HWNDPREV);
-                bool coveredByTaskbar = false;
-                IntPtr coveringTaskbar = IntPtr.Zero;
-                if (prev != IntPtr.Zero)
-                {
-                    sb.Clear();
-                    Win32Helper.GetClassName(prev, sb, sb.Capacity);
-                    string prevClass = sb.ToString();
-                    if (prevClass is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd")
-                    {
-                        coveredByTaskbar = true;
-                        coveringTaskbar = prev;
-                    }
-                }
 
-                // Не HWND_TOPMOST при конфликте с таскбаром — только вставка над ним.
-                if (taskbarFg || coveredByTaskbar)
+                if (taskbarFg || occluded)
                 {
                     if (!isTopMost)
                     {
                         SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0,
                             Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
                     }
-                    IntPtr taskbar = taskbarFg ? fg : coveringTaskbar;
+
+                    IntPtr taskbar = occludingBar;
+                    if (taskbar == IntPtr.Zero)
+                        taskbar = ResolveTaskbarRoot(fg);
                     if (taskbar == IntPtr.Zero || !IsWindow(taskbar))
-                        taskbar = coveringTaskbar != IntPtr.Zero ? coveringTaskbar : fg;
+                        taskbar = _attachedTaskbar;
+                    if (taskbar == IntPtr.Zero || !IsWindow(taskbar))
+                        taskbar = Win32Helper.FindWindow("Shell_TrayWnd", null!);
+
                     KeepAboveTaskbar(taskbar);
+
+                    // Если всё ещё перекрыты — один TOPMOST без периодической войны с shell
+                    if (TryGetOccludingTaskbar(out _))
+                    {
+                        SetWindowPos(_hWnd, Win32Helper.HWND_TOPMOST, 0, 0, 0, 0,
+                            Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+                    }
                     return;
                 }
 
@@ -322,9 +332,12 @@ namespace Kil0bitSystemMonitor
 
             if (!_config.Config.StickToTaskbar) return;
 
-            IntPtr stickBar = _attachedTaskbar;
+            IntPtr stickBar = occludingBar != IntPtr.Zero ? occludingBar : _attachedTaskbar;
             if (taskbarFg)
-                stickBar = fg;
+            {
+                IntPtr root = ResolveTaskbarRoot(fg);
+                if (root != IntPtr.Zero) stickBar = root;
+            }
 
             if (stickBar == IntPtr.Zero || !IsWindow(stickBar))
             {
@@ -335,9 +348,59 @@ namespace Kil0bitSystemMonitor
                 KeepAboveTaskbar(stickBar);
         }
 
-        /// <summary>
-        /// Ставит оверлей сразу над указанным таскбаром в Z-order (режим без AlwaysOnTop).
-        /// </summary>
+        /// <summary>Оверлей перекрыт таскбаром, если hit-test центра попадает в дерево панели.</summary>
+        private bool TryGetOccludingTaskbar(out IntPtr taskbarRoot)
+        {
+            taskbarRoot = IntPtr.Zero;
+            try
+            {
+                if (_hWnd == IntPtr.Zero || !Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT r))
+                    return false;
+
+                var pt = new Win32Helper.POINT
+                {
+                    X = (r.Left + r.Right) / 2,
+                    Y = (r.Top + r.Bottom) / 2
+                };
+                IntPtr hit = WindowFromPoint(pt);
+                if (hit == IntPtr.Zero || hit == _hWnd)
+                    return false;
+
+                taskbarRoot = ResolveTaskbarRoot(hit);
+                return taskbarRoot != IntPtr.Zero;
+            }
+            catch
+            {
+                taskbarRoot = IntPtr.Zero;
+                return false;
+            }
+        }
+
+        private static bool IsTaskbarRoot(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero) return false;
+            var sb = new StringBuilder(64);
+            Win32Helper.GetClassName(hwnd, sb, sb.Capacity);
+            string cls = sb.ToString();
+            return cls is "Shell_TrayWnd" or "Shell_SecondaryTrayWnd";
+        }
+
+        private static IntPtr ResolveTaskbarRoot(IntPtr hwnd)
+        {
+            IntPtr cur = hwnd;
+            for (int i = 0; i < 12 && cur != IntPtr.Zero; i++)
+            {
+                if (IsTaskbarRoot(cur))
+                    return cur;
+                IntPtr parent = GetAncestor(cur, GA_PARENT);
+                if (parent == IntPtr.Zero || parent == cur)
+                    break;
+                cur = parent;
+            }
+            return IntPtr.Zero;
+        }
+
+        /// <summary>Ставит оверлей сразу над указанным таскбаром в Z-order.</summary>
         private void KeepAboveTaskbar(IntPtr taskbar)
         {
             if (taskbar == IntPtr.Zero || !IsWindow(taskbar)) return;
@@ -379,7 +442,7 @@ namespace Kil0bitSystemMonitor
                 if (x < -10000 || x > 10000 || y < -10000 || y > 10000) { x = 100; y = 100; }
 
                 IntPtr hInstance = GetModuleHandle(null);
-                _hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, "Kil0bitOverlayWndClass_Main", "Kil0bit System Monitor Overlay", WS_POPUP, x, y, 300, 32, IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero);
+                _hWnd = CreateWindowEx(WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW, OverlayPopupLayout.OverlayWindowClass, "Kil0bit System Monitor Overlay", WS_POPUP, x, y, 300, 32, IntPtr.Zero, IntPtr.Zero, hInstance, IntPtr.Zero);
                 if (_hWnd == IntPtr.Zero)
                 {
                     DebugLogger.Error("Overlay", "Failed to recreate overlay HWND");
@@ -397,7 +460,7 @@ namespace Kil0bitSystemMonitor
                 _dpiScale = _currentDpi / 96.0f;
 
                 int disableTransitions = 1;
-                Win32Helper.DwmSetWindowAttribute(_hWnd, 3, ref disableTransitions, sizeof(int));
+                OsCompat.SafeDwmSetWindowAttribute(_hWnd, 3, ref disableTransitions);
 
                 if (_config.Config.StickToTaskbar)
                     AttachToTaskbar();
@@ -501,17 +564,15 @@ namespace Kil0bitSystemMonitor
                 if (_processListWindow != null && _processListWindow.IsVisible)
                     return true;
 
-                if (_shellFullscreen) return false;
-
-                IntPtr taskbarHwnd = Win32Helper.FindWindow("Shell_TrayWnd", null!);
-                if (taskbarHwnd != IntPtr.Zero && Win32Helper.GetWindowRect(taskbarHwnd, out Win32Helper.RECT tbRect))
+                if (_shellFullscreen)
                 {
-                    int tw = tbRect.Right - tbRect.Left;
-                    int th = tbRect.Bottom - tbRect.Top;
-                    // Игнор мигающих нулевых размеров при анимациях shell
-                    if ((th <= 4 || tw <= 4) && tw + th > 0)
+                    // Застрявший ABN_FULLSCREENAPP при фокусе на shell/таскбаре не должен прятать оверлей
+                    IntPtr shellFg = GetForegroundWindow();
+                    if (!IsShellWindow(shellFg) && ResolveTaskbarRoot(shellFg) == IntPtr.Zero)
                         return false;
                 }
+
+                // Анимация/auto-hide таскбара даёт крошечный rect — это не fullscreen, оверлей не прятать.
 
                 if (fg != IntPtr.Zero && fg != _hWnd)
                 {
@@ -868,9 +929,9 @@ namespace Kil0bitSystemMonitor
                 or HSHELL_WINDOWREPLACED or HSHELL_WINDOWREPLACING)
                 ScheduleTaskbarBoundsRefresh();
 
-            // Сразу после активации таскбара — до тика 500ms EnforceZOrder.
+            // Сразу после активации — без отложенного BeginInvoke (иначе успевает «спрятаться» под панель).
             if (code == HSHELL_WINDOWACTIVATED && _overlayVisible)
-                _dispatcher.BeginInvoke(ReassertZOrder);
+                ReassertZOrder();
         }
 
         private void ScheduleTaskbarBoundsRefresh()
@@ -1523,7 +1584,23 @@ namespace Kil0bitSystemMonitor
                     _processListWindow.RepositionFromOverlay();
                 return IntPtr.Zero;
             }
-            if (msg == WM_APPBAR_CALLBACK) { if ((uint)wParam.ToInt32() == ABN_FULLSCREENAPP) { _shellFullscreen = (lParam != IntPtr.Zero); _dispatcher.BeginInvoke(UpdateVisibility); } return IntPtr.Zero; }
+            if (msg == WM_APPBAR_CALLBACK)
+            {
+                if ((uint)wParam.ToInt32() == ABN_FULLSCREENAPP)
+                {
+                    bool claimed = lParam != IntPtr.Zero;
+                    // Ложный fullscreen при клике по таскбару/shell — не прячем оверлей
+                    if (claimed)
+                    {
+                        IntPtr fg = GetForegroundWindow();
+                        if (IsShellWindow(fg) || ResolveTaskbarRoot(fg) != IntPtr.Zero)
+                            claimed = false;
+                    }
+                    _shellFullscreen = claimed;
+                    _dispatcher.BeginInvoke(UpdateVisibility);
+                }
+                return IntPtr.Zero;
+            }
             if (msg == WM_SHOW_SETTINGS) { _dispatcher.BeginInvoke(() => App.OpenSettings(_viewModel, _config)); return IntPtr.Zero; }
             if (msg == WM_DPICHANGED) { _currentDpi = (uint)(wParam.ToInt32() & 0xFFFF); _dpiScale = _currentDpi / 96.0f; ClearCaches(); ScheduleTaskbarBoundsRefresh(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
             if (msg == WM_DISPLAYCHANGE || msg == WM_SETTINGCHANGE) { ScheduleTaskbarBoundsRefresh(); AlignToTaskbarCenter(); UpdateLayer(); return IntPtr.Zero; }
@@ -1575,7 +1652,7 @@ namespace Kil0bitSystemMonitor
                 if (!_config.Config.IsProcessListClickMode)
                 {
                     DebugLogger.Info("Overlay.Click", "DBLCLK → Task Manager");
-                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr") { UseShellExecute = true });
+                    TaskManagerLauncher.OpenNearOverlay(_hWnd);
                 }
                 else
                 {
@@ -1615,7 +1692,10 @@ namespace Kil0bitSystemMonitor
                     if (_config.Config.IsProcessListClickMode)
                     {
                         DebugLogger.Info("Overlay.Click", "UP → ToggleProcessList");
-                        _dispatcher.BeginInvoke(ToggleProcessList);
+                        if (_dispatcher.CheckAccess())
+                            ToggleProcessList();
+                        else
+                            _dispatcher.BeginInvoke(ToggleProcessList, System.Windows.Threading.DispatcherPriority.Send);
                     }
                     else
                     {
@@ -1674,7 +1754,7 @@ namespace Kil0bitSystemMonitor
                     else if (ch == 1007) { _config.Config.StickToTaskbar = !_config.Config.StickToTaskbar; _config.SaveConfig(); }
                     else if (ch == 1008) { _config.Config.AlwaysOnTop = !_config.Config.AlwaysOnTop; _config.SaveConfig(); }
                     else if (ch == 1009) { _config.Config.HideOnFullscreen = !_config.Config.HideOnFullscreen; _config.SaveConfig(); }
-                    else if (ch == 1002) System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr") { UseShellExecute = true });
+                    else if (ch == 1002) TaskManagerLauncher.OpenNearOverlay(_hWnd);
                     else if (ch == 1003) _dispatcher.BeginInvoke(() => { App.OpenSettings(_viewModel, _config); App.SettingsWindow?.SelectSection("About"); });
                     else if (ch == 1004) _dispatcher.BeginInvoke(() => App.Quit());
                 }
@@ -1687,29 +1767,82 @@ namespace Kil0bitSystemMonitor
         {
             try
             {
-                if (_processListWindow != null && _processListWindow.IsVisible)
+                if (_suppressProcessListOpen)
                 {
-                    DebugLogger.Info("ProcessList", "close");
-                    _processListWindow.Close();
-                    _processListWindow = null;
-                    return;
+                    _suppressProcessListOpen = false;
+                    // UP того же клика, что закрыл на DOWN — не открываем снова.
+                    // Но если popup уже уничтожен, suppress «залип» (UP не дошёл) — тогда открываем.
+                    if (_processListWindow != null)
+                    {
+                        DebugLogger.Info("ProcessList", "toggle suppressed (same click as close)");
+                        return;
+                    }
+                    DebugLogger.Info("ProcessList", "stale suppress cleared → open");
                 }
 
-                DebugLogger.Info("ProcessList", "open");
-                _processListWindow = new ProcessListWindow(_config, _hWnd);
-                var win = _processListWindow;
-                win.Closed += (_, _) =>
-                {
-                    if (ReferenceEquals(_processListWindow, win))
-                        _processListWindow = null;
-                };
-                win.Show();
-                win.Activate();
+                ApplyProcessListToggle();
             }
             catch (Exception ex)
             {
                 DebugLogger.Error("ProcessList", ex.Message);
             }
+        }
+
+        /// <summary>Клик по оверлею при живом popup (из mouse hook, на DOWN).</summary>
+        private void OnProcessListOverlayPointerDown()
+        {
+            void Run()
+            {
+                try
+                {
+                    _suppressProcessListOpen = true;
+                    ApplyProcessListToggle();
+                }
+                catch (Exception ex)
+                {
+                    DebugLogger.Error("ProcessList", ex.Message);
+                    _suppressProcessListOpen = false;
+                }
+            }
+
+            if (_dispatcher.CheckAccess())
+                Run();
+            else
+                _dispatcher.BeginInvoke(Run, System.Windows.Threading.DispatcherPriority.Send);
+        }
+
+        private void ApplyProcessListToggle()
+        {
+            var existing = _processListWindow;
+            if (existing != null)
+            {
+                if (existing.IsClosing)
+                {
+                    DebugLogger.Info("ProcessList", "reopen during close");
+                    existing.ForceCloseImmediate();
+                    if (ReferenceEquals(_processListWindow, existing))
+                        _processListWindow = null;
+                }
+                else
+                {
+                    DebugLogger.Info("ProcessList", "close");
+                    existing.RequestClose();
+                    return;
+                }
+            }
+
+            DebugLogger.Info("ProcessList", "open");
+            _processListWindow = new ProcessListWindow(_config, _hWnd, OnProcessListOverlayPointerDown);
+            var win = _processListWindow;
+            win.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(_processListWindow, win))
+                    _processListWindow = null;
+                // Не оставляем suppress после полного закрытия — иначе следующий вкл глотается
+                _suppressProcessListOpen = false;
+            };
+            win.Show();
+            win.Activate();
         }
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] struct WNDCLASSEX { public uint cbSize; public uint style; public IntPtr lpfnWndProc; public int cbClsExtra; public int cbWndExtra; public IntPtr hInstance; public IntPtr hIcon; public IntPtr hCursor; public IntPtr hbrBackground; public string lpszMenuName; public string lpszClassName; public IntPtr hIconSm; }
@@ -1751,6 +1884,9 @@ namespace Kil0bitSystemMonitor
         [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr h, uint f);
         [DllImport("user32.dll")] static extern bool DestroyWindow(IntPtr h);
         [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(Win32Helper.POINT pt);
+        [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr hWnd, uint gaFlags);
+        private const uint GA_PARENT = 1;
         [StructLayout(LayoutKind.Sequential)] struct TRACKMOUSEEVENT { public uint cbSize; public uint dwFlags; public IntPtr hwndTrack; public uint dwHoverTime; }
         [DllImport("user32.dll")] static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT e);
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreatePopupMenu();

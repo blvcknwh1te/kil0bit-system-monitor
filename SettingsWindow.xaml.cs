@@ -251,7 +251,7 @@ namespace Kil0bitSystemMonitor
 
                 // Force Immersive Dark Mode for the title bar system buttons
                 int darkMode = 1;
-                Win32Helper.DwmSetWindowAttribute(hWnd, Win32Helper.DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode, sizeof(int));
+                OsCompat.SafeDwmSetWindowAttribute(hWnd, Win32Helper.DWMWA_USE_IMMERSIVE_DARK_MODE, ref darkMode);
 
                 ApplyLanguage();
             }

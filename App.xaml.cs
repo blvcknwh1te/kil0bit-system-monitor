@@ -65,7 +65,7 @@ namespace Kil0bitSystemMonitor
             if (!createdNew)
             {
                 // Try to find the existing window to show settings before exiting
-                IntPtr existingWnd = FindWindow("Kil0bitOverlayWndClass_Main", null);
+                IntPtr existingWnd = FindWindow(Kil0bitSystemMonitor.Helpers.OverlayPopupLayout.OverlayWindowClass, null);
                 if (existingWnd != IntPtr.Zero)
                 {
                     SendMessage(existingWnd, WM_SHOW_SETTINGS, IntPtr.Zero, IntPtr.Zero);

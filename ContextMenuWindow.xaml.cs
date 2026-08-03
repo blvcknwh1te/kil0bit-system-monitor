@@ -46,7 +46,7 @@ namespace Kil0bitSystemMonitor
             var taskMgrItem = new MenuItem { Header = L["Overlay.Menu.TaskManager"] };
             taskMgrItem.Click += (s, e) =>
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("taskmgr") { UseShellExecute = true });
+                TaskManagerLauncher.OpenNearOverlay();
                 this.Close();
             };
 

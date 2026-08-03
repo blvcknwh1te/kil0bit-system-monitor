@@ -12,6 +12,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Kil0bitSystemMonitor.Helpers;
 using Kil0bitSystemMonitor.Models;
@@ -22,6 +23,10 @@ namespace Kil0bitSystemMonitor
 {
     public partial class ProcessListWindow : Window
     {
+        /// <summary>Как DragEaseSeconds у оверлея — коротко и без пафоса.</summary>
+        private const double OpenAnimSeconds = 0.14;
+        private const double OpenSlideDip = 10;
+
         private readonly ConfigService _config;
         private readonly ProcessListService _service = new();
         private readonly Dictionary<int, ProcessInfoItem> _processes = new();
@@ -29,9 +34,12 @@ namespace Kil0bitSystemMonitor
         private readonly HashSet<string> _expandedGroups = new(StringComparer.OrdinalIgnoreCase);
         private readonly DispatcherTimer _timer;
         private readonly IntPtr _ownerOverlay;
+        private readonly Action? _onOverlayPointerDown;
         private bool _closing;
         private bool _suppressDeactivate;
         private bool _ready;
+        private bool _openAnimStarted;
+        private bool _closeAnimStarted;
         private bool _refreshInFlight;
         private bool _repositionQueued;
         private bool _contextMenuOpen;
@@ -46,11 +54,15 @@ namespace Kil0bitSystemMonitor
 
         private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
-        public ProcessListWindow(ConfigService config, IntPtr ownerOverlay)
+        /// <summary>Идёт закрытие (в т.ч. fade-out) — toggle может форсировать reopen.</summary>
+        public bool IsClosing => _closing;
+
+        public ProcessListWindow(ConfigService config, IntPtr ownerOverlay, Action? onOverlayPointerDown = null)
         {
             InitializeComponent();
             _config = config;
             _ownerOverlay = ownerOverlay;
+            _onOverlayPointerDown = onOverlayPointerDown;
 
             _sortColumn = NormalizeSort(_config.Config.ProcessListSortColumn);
             _sortAscending = _config.Config.ProcessListSortAscending;
@@ -65,23 +77,28 @@ namespace Kil0bitSystemMonitor
             _config.Config.PropertyChanged += Config_PropertyChanged;
             LocalizationService.Instance.LanguageChanged += ApplyLanguage;
 
+            // HWND сразу — hook и позиция до первого кадра Show()
+            new WindowInteropHelper(this).EnsureHandle();
+            var hWnd = new WindowInteropHelper(this).Handle;
+            int exStyle = Win32Helper.GetWindowLong(hWnd, Win32Helper.GWL_EXSTYLE);
+            Win32Helper.SetWindowLongPtr(hWnd, Win32Helper.GWL_EXSTYLE, (IntPtr)(exStyle | 0x00000080));
+            PositionAgainstOverlay();
+            _ready = true;
+            InstallOutsideClickHook();
+            _timer.Start();
+
             SourceInitialized += (_, _) =>
             {
-                var hWnd = new WindowInteropHelper(this).Handle;
-                int exStyle = Win32Helper.GetWindowLong(hWnd, Win32Helper.GWL_EXSTYLE);
-                Win32Helper.SetWindowLongPtr(hWnd, Win32Helper.GWL_EXSTYLE, (IntPtr)(exStyle | 0x00000080));
                 PositionAgainstOverlay();
+                StartOpenAnimation();
             };
 
             ContentRendered += async (_, _) =>
             {
-                if (_ready) return;
                 PositionAgainstOverlay();
-                Opacity = 1;
-                _ready = true;
-                InstallOutsideClickHook();
+                if (!_openAnimStarted)
+                    StartOpenAnimation();
                 await RefreshSnapshotAsync(prime: true);
-                _timer.Start();
             };
 
             Closed += (_, _) =>
@@ -90,12 +107,115 @@ namespace Kil0bitSystemMonitor
                 _closeGeneration++;
                 UninstallOutsideClickHook();
                 _timer.Stop();
+                BeginAnimation(OpacityProperty, null);
+                RootSlide.BeginAnimation(TranslateTransform.YProperty, null);
                 _config.Config.PropertyChanged -= Config_PropertyChanged;
                 LocalizationService.Instance.LanguageChanged -= ApplyLanguage;
                 _service.Dispose();
             };
 
-            PositionAgainstOverlay();
+            StartOpenAnimation();
+        }
+
+        private void StartOpenAnimation()
+        {
+            if (_openAnimStarted || _closing) return;
+            _openAnimStarted = true;
+
+            RootSlide.Y = OpenSlideDip;
+            Opacity = 0;
+
+            var ease = new QuadraticEase { EasingMode = EasingMode.EaseOut };
+            var duration = TimeSpan.FromSeconds(OpenAnimSeconds);
+
+            var fade = new DoubleAnimation(0, 1, duration)
+            {
+                EasingFunction = ease,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+            var slide = new DoubleAnimation(OpenSlideDip, 0, duration)
+            {
+                EasingFunction = ease,
+                FillBehavior = FillBehavior.HoldEnd
+            };
+
+            BeginAnimation(OpacityProperty, fade);
+            RootSlide.BeginAnimation(TranslateTransform.YProperty, slide);
+        }
+
+        private void StartCloseAnimation(Action onCompleted)
+        {
+            if (_closeAnimStarted)
+            {
+                onCompleted();
+                return;
+            }
+            _closeAnimStarted = true;
+
+            // Снять HoldEnd от open-anim, иначе Close не сдвинет значения
+            double opacityFrom = Opacity;
+            double slideFrom = RootSlide.Y;
+            BeginAnimation(OpacityProperty, null);
+            RootSlide.BeginAnimation(TranslateTransform.YProperty, null);
+            Opacity = opacityFrom;
+            RootSlide.Y = slideFrom;
+
+            var ease = new QuadraticEase { EasingMode = EasingMode.EaseIn };
+            var duration = TimeSpan.FromSeconds(OpenAnimSeconds);
+
+            var fade = new DoubleAnimation(opacityFrom, 0, duration)
+            {
+                EasingFunction = ease,
+                FillBehavior = FillBehavior.Stop
+            };
+            var slide = new DoubleAnimation(slideFrom, OpenSlideDip, duration)
+            {
+                EasingFunction = ease,
+                FillBehavior = FillBehavior.Stop
+            };
+
+            fade.Completed += (_, _) => onCompleted();
+            BeginAnimation(OpacityProperty, fade);
+            RootSlide.BeginAnimation(TranslateTransform.YProperty, slide);
+        }
+
+        /// <summary>Закрытие с fade-out (обратный open).</summary>
+        public void RequestClose()
+        {
+            if (_closing) return;
+            _closing = true;
+            _closeGeneration++;
+            _timer.Stop();
+            // Hook оставляем до конца анимации — повторный клик по оверлею = reopen
+
+            StartCloseAnimation(() =>
+            {
+                UninstallOutsideClickHook();
+                try
+                {
+                    if (IsLoaded)
+                        Close();
+                }
+                catch { }
+            });
+        }
+
+        /// <summary>Мгновенно закрыть без ожидания анимации (быстрый reopen).</summary>
+        public void ForceCloseImmediate()
+        {
+            _closing = true;
+            _closeGeneration++;
+            UninstallOutsideClickHook();
+            _timer.Stop();
+            BeginAnimation(OpacityProperty, null);
+            RootSlide.BeginAnimation(TranslateTransform.YProperty, null);
+            Opacity = 0;
+            try
+            {
+                if (IsLoaded)
+                    Close();
+            }
+            catch { }
         }
 
         private void Config_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -290,88 +410,29 @@ namespace Kil0bitSystemMonitor
         /// </summary>
         public void PositionAgainstOverlay()
         {
-            if (!Win32Helper.GetWindowRect(_ownerOverlay, out Win32Helper.RECT wr))
-                return;
-
-            IntPtr hMon = MonitorFromWindow(_ownerOverlay, 1);
-            var mi = new MONITORINFO { cbSize = (uint)Marshal.SizeOf(typeof(MONITORINFO)) };
-            if (!GetMonitorInfo(hMon, ref mi))
-                return;
-
             IntPtr hwnd = new WindowInteropHelper(this).Handle;
-            double dpi = 1.0;
-            try
-            {
-                uint d = GetDpiForWindow(hwnd != IntPtr.Zero ? hwnd : _ownerOverlay);
-                if (d > 0) dpi = d / 96.0;
-            }
-            catch { }
+            if (!OverlayPopupLayout.TryCompute(_ownerOverlay, hwnd, out var p))
+                return;
 
-            const double widthDip = 620;
-            const int gap = 4;
-            int workLeft = mi.rcWork.Left + gap;
-            int workTop = mi.rcWork.Top + gap;
-            int workRight = mi.rcWork.Right - gap;
-            int workBottom = mi.rcWork.Bottom - gap; // верх таскбара при нижней панели
-
-            int workH = Math.Max(120, workBottom - workTop);
-            int preferredH = Math.Max(160, (int)Math.Round(workH * 0.5));
-            int popupW = Math.Max(1, (int)Math.Round(widthDip * dpi));
-
-            int panelCx = (wr.Left + wr.Right) / 2;
-            int spaceAbove = Math.Max(0, wr.Top - workTop - gap);
-            int spaceBelow = Math.Max(0, workBottom - wr.Bottom - gap);
-
-            // Предпочитаем сверху (оверлей на таскбаре); высоту режем по доступному месту
-            bool placeAbove = spaceAbove >= spaceBelow || spaceAbove >= 160;
-            int avail = placeAbove ? spaceAbove : spaceBelow;
-            if (avail < 120)
-                avail = workH;
-
-            int popupH = Math.Min(preferredH, avail);
-            popupH = Math.Max(120, popupH);
-
-            int left = panelCx - popupW / 2;
-            int maxLeft = workRight - popupW;
-            if (maxLeft < workLeft) maxLeft = workLeft;
-            left = SoftClamp(left, workLeft, maxLeft);
-
-            int top = placeAbove
-                ? wr.Top - popupH - gap
-                : wr.Bottom + gap;
-
-            int maxTop = workBottom - popupH;
-            if (maxTop < workTop) maxTop = workTop;
-            top = SoftClamp(top, workTop, maxTop);
-
-            // Гарантия: не ниже work area (не залазим на таскбар)
-            if (top + popupH > workBottom)
-            {
-                popupH = Math.Max(120, workBottom - top);
-                if (top + popupH > workBottom)
-                    top = Math.Max(workTop, workBottom - popupH);
-            }
-
-            double heightDip = popupH / dpi;
-            MaxHeight = heightDip;
-            Height = heightDip;
-            Width = widthDip;
-            ProcessList.Height = Math.Max(80, heightDip - 48);
+            MaxHeight = p.HeightDip;
+            Height = p.HeightDip;
+            Width = p.WidthDip;
+            ProcessList.Height = Math.Max(80, p.HeightDip - 48);
             ProcessList.MaxHeight = ProcessList.Height;
 
-            Left = left / dpi;
-            Top = top / dpi;
+            Left = p.Left / p.DpiScale;
+            Top = p.Top / p.DpiScale;
 
             if (hwnd != IntPtr.Zero)
             {
-                SetWindowPos(hwnd, IntPtr.Zero, left, top, popupW, popupH,
-                    SWP_NOZORDER | SWP_NOACTIVATE);
+                Win32Helper.SetWindowPos(hwnd, IntPtr.Zero, p.Left, p.Top, p.WidthPx, p.HeightPx,
+                    Win32Helper.SWP_NOZORDER | Win32Helper.SWP_NOACTIVATE);
             }
 
-            if (DebugLogger.IsEnabled)
+            if (DebugLogger.IsEnabled && Win32Helper.GetWindowRect(_ownerOverlay, out Win32Helper.RECT wr))
             {
                 DebugLogger.Info("ProcessList.Pos",
-                    $"overlay=({wr.Left},{wr.Top})-({wr.Right},{wr.Bottom}) popup=({left},{top}) {popupW}x{popupH} workBottom={workBottom} dpi={dpi:0.##}");
+                    $"overlay=({wr.Left},{wr.Top})-({wr.Right},{wr.Bottom}) popup=({p.Left},{p.Top}) {p.WidthPx}x{p.HeightPx} dpi={p.DpiScale:0.##}");
             }
         }
 
@@ -388,14 +449,6 @@ namespace Kil0bitSystemMonitor
                 if (!_closing && _ready)
                     PositionAgainstOverlay();
             }, DispatcherPriority.Render);
-        }
-
-        private static int SoftClamp(int v, int min, int max)
-        {
-            if (max < min) return (min + max) / 2;
-            if (v < min) return min;
-            if (v > max) return max;
-            return v;
         }
 
         private void ApplySort()
@@ -457,19 +510,8 @@ namespace Kil0bitSystemMonitor
 
         private void OpenTaskMgrBtn_Click(object sender, RoutedEventArgs e)
         {
-            try
-            {
-                RequestClose();
-                Process.Start(new ProcessStartInfo("taskmgr") { UseShellExecute = true });
-            }
-            catch { }
-        }
-
-        private void RequestClose()
-        {
-            if (_closing) return;
-            _closing = true;
-            Close();
+            ForceCloseImmediate();
+            TaskManagerLauncher.OpenNearOverlay(_ownerOverlay);
         }
 
         private void CaptureContext(ProcessListRow? row)
@@ -633,13 +675,12 @@ namespace Kil0bitSystemMonitor
                 return;
 
             int gen = ++_closeGeneration;
-            Dispatcher.BeginInvoke(async () =>
+            Dispatcher.BeginInvoke(() =>
             {
-                await Task.Delay(80);
                 if (_closing || gen != _closeGeneration || _suppressDeactivate) return;
                 if (!IsCursorOverOverlay() && !IsCursorOverThisWindow())
                     RequestClose();
-            }, DispatcherPriority.Background);
+            }, DispatcherPriority.Input);
         }
 
         private void InstallOutsideClickHook()
@@ -659,25 +700,38 @@ namespace Kil0bitSystemMonitor
 
         private IntPtr OutsideClickHook(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && _ready && !_closing && !_suppressDeactivate && !_contextMenuOpen)
+            // Hook живёт и во время close-anim: клик по оверлею = мгновенный reopen-сигнал через Toggle на UP.
+            // Закрытие по оверлею — на DOWN, пока ещё не _closing.
+            if (nCode < 0 || !_ready || _suppressDeactivate || _contextMenuOpen)
+                return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+
+            int msg = unchecked((int)wParam.ToInt64());
+            if (msg != WM_LBUTTONDOWN)
+                return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+
+            var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
+            int x = info.pt.X;
+            int y = info.pt.Y;
+
+            if (IsPointOverPopupMenu(x, y) || IsPointOverThisWindow(x, y))
+                return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
+
+            if (IsPointOverOverlay(x, y))
             {
-                int msg = unchecked((int)wParam.ToInt64());
-                // Только ЛКМ снаружи — ПКМ нужен для ContextMenu
-                if (msg == WM_LBUTTONDOWN)
-                {
-                    var info = Marshal.PtrToStructure<MSLLHOOKSTRUCT>(lParam);
-                    if (!IsPointOverThisWindow(info.pt.X, info.pt.Y) &&
-                        !IsPointOverOverlay(info.pt.X, info.pt.Y) &&
-                        !IsPointOverPopupMenu(info.pt.X, info.pt.Y))
-                    {
-                        Dispatcher.BeginInvoke(() =>
-                        {
-                            if (!_closing && !_suppressDeactivate && !_contextMenuOpen)
-                                RequestClose();
-                        });
-                    }
-                }
+                // Весь toggle по оверлею — на DOWN (close или reopen), UP подавляется флагом
+                try { _onOverlayPointerDown?.Invoke(); } catch { }
+                return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
             }
+
+            if (!_closing)
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    if (!_closing && !_suppressDeactivate && !_contextMenuOpen)
+                        RequestClose();
+                }, DispatcherPriority.Send);
+            }
+
             return CallNextHookEx(_mouseHook, nCode, wParam, lParam);
         }
 
@@ -740,15 +794,6 @@ namespace Kil0bitSystemMonitor
             ShellExecuteEx(ref info);
         }
 
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MONITORINFO
-        {
-            public uint cbSize;
-            public Win32Helper.RECT rcMonitor;
-            public Win32Helper.RECT rcWork;
-            public uint dwFlags;
-        }
-
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct SHELLEXECUTEINFO
         {
@@ -769,8 +814,6 @@ namespace Kil0bitSystemMonitor
             public IntPtr hProcess;
         }
 
-        private const uint SWP_NOZORDER = 0x0004;
-        private const uint SWP_NOACTIVATE = 0x0010;
         private const int WH_MOUSE_LL = 14;
         private const int WM_LBUTTONDOWN = 0x0201;
         private const int WM_RBUTTONDOWN = 0x0204;
@@ -791,18 +834,6 @@ namespace Kil0bitSystemMonitor
             public uint time;
             public IntPtr dwExtraInfo;
         }
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
-
-        [DllImport("user32.dll")]
-        private static extern uint GetDpiForWindow(IntPtr hwnd);
-
-        [DllImport("user32.dll")]
-        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 
         [DllImport("user32.dll")]
         private static extern IntPtr WindowFromPoint(POINTAPI pt);
