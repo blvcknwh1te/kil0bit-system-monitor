@@ -354,10 +354,6 @@ namespace Kil0bitSystemMonitor
             c.ShowBackground = false;
             c.NetLabelColorHex = null; c.CpuRamLabelColorHex = null; c.GpuLabelColorHex = null; c.DiskLabelColorHex = null;
             c.NetAccentColorHex = null; c.CpuRamAccentColorHex = null; c.GpuAccentColorHex = null; c.DiskAccentColorHex = null;
-            c.WarningThreshold = MetricAlertDefaults.WarningThreshold;
-            c.CriticalThreshold = MetricAlertDefaults.CriticalThreshold;
-            c.WarningColorHex = MetricAlertDefaults.WarningColorHex;
-            c.CriticalColorHex = MetricAlertDefaults.CriticalColorHex;
             _config.SaveConfig();
         }
 
