@@ -802,8 +802,12 @@
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <Slider Minimum="1" Maximum="99" TickFrequency="1" IsSnapToTickEnabled="True"
-                                                    Value="{Binding Config.WarningThresholdPercent, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                            <!-- Шкала 0–100 у обоих: thumb warning останавливается на (critical−5)% длины трека -->
+                                            <Slider Minimum="0" Maximum="100"
+                                                    TickFrequency="1" IsSnapToTickEnabled="True"
+                                                    Value="{Binding Config.WarningThresholdPercent, Mode=TwoWay}"
+                                                    ValueChanged="WarningThresholdSlider_ValueChanged"
+                                                    VerticalAlignment="Center"/>
                                             <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" MinWidth="40"
                                                        Text="{Binding Config.WarningThresholdPercent, StringFormat={}{0}%}"/>
                                         </Grid>
@@ -827,8 +831,11 @@
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
-                                            <Slider Minimum="1" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
-                                                    Value="{Binding Config.CriticalThresholdPercent, Mode=TwoWay}" VerticalAlignment="Center"/>
+                                            <Slider Minimum="0" Maximum="100"
+                                                    TickFrequency="1" IsSnapToTickEnabled="True"
+                                                    Value="{Binding Config.CriticalThresholdPercent, Mode=TwoWay}"
+                                                    ValueChanged="CriticalThresholdSlider_ValueChanged"
+                                                    VerticalAlignment="Center"/>
                                             <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" MinWidth="40"
                                                        Text="{Binding Config.CriticalThresholdPercent, StringFormat={}{0}%}"/>
                                         </Grid>

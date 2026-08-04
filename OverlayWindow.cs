@@ -57,6 +57,10 @@ namespace Kil0bitSystemMonitor
         private ProcessListWindow? _processListWindow;
         /// <summary>Клик по оверлею уже закрыл popup через hook — не открывать снова на UP.</summary>
         private bool _suppressProcessListOpen;
+        private int _zOrderInvokePending;
+        private int _metricsInvokePending;
+        private SystemMetrics? _pendingMetrics;
+        private const int MeasureCacheMax = 400;
 
         // Visibility / fade state
         private byte _currentAlpha = 255;
@@ -179,11 +183,18 @@ namespace Kil0bitSystemMonitor
                 RegisterShellHook();
 
                 _onMetricsUpdated = (m) => {
-                    _dispatcher.BeginInvoke(() => {
+                    System.Threading.Interlocked.Exchange(ref _pendingMetrics, m);
+                    if (System.Threading.Interlocked.CompareExchange(ref _metricsInvokePending, 1, 0) != 0)
+                        return;
+                    _dispatcher.BeginInvoke(() =>
+                    {
+                        System.Threading.Interlocked.Exchange(ref _metricsInvokePending, 0);
                         try
                         {
-                            if (!EnsureOverlayHwndAlive()) return;
-                            _viewModel.Metrics = m;
+                            if (_disposing || !EnsureOverlayHwndAlive()) return;
+                            var latest = System.Threading.Interlocked.Exchange(ref _pendingMetrics, null);
+                            if (latest == null) return;
+                            _viewModel.Metrics = latest;
                             if (_targetAlpha > 0 || _currentAlpha > 0) UpdateLayer();
                         }
                         catch (Exception ex)
@@ -193,7 +204,7 @@ namespace Kil0bitSystemMonitor
                     });
                 };
                 _telemetry.MetricsUpdated += _onMetricsUpdated;
-                _zOrderTimer = new System.Threading.Timer(EnforceZOrder, null, 0, 500);
+                _zOrderTimer = new System.Threading.Timer(EnforceZOrder, null, 1000, 1000);
 
                 _onConfigPropertyChanged = (s, e) => {
                     _dispatcher.BeginInvoke(() => {
@@ -237,8 +248,13 @@ namespace Kil0bitSystemMonitor
 
         private void EnforceZOrder(object? state)
         {
+            if (_disposing) return;
+            if (System.Threading.Interlocked.CompareExchange(ref _zOrderInvokePending, 1, 0) != 0)
+                return;
+
             _dispatcher.BeginInvoke(() =>
             {
+                System.Threading.Interlocked.Exchange(ref _zOrderInvokePending, 0);
                 if (_disposing) return;
                 if (!EnsureOverlayHwndAlive()) return;
 
@@ -662,8 +678,12 @@ namespace Kil0bitSystemMonitor
         private readonly System.Collections.Concurrent.ConcurrentDictionary<nint, (int IconRight, int TrayLeft)> _taskbarBounds = new();
         private IntPtr _attachedTaskbar = IntPtr.Zero;
         private int _taskbarBoundsRefreshGen;
+        private int _uiaInFlight;
+        private long _uiaCooldownUntilTick;
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<nint, int> _uiaIconRightCache = new();
         private bool _shellHookRegistered;
         private uint _wmShellHook;
+        private const int UiaFailCooldownMs = 120_000;
 
         private const int HSHELL_WINDOWCREATED = 1;
         private const int HSHELL_WINDOWDESTROYED = 2;
@@ -911,7 +931,8 @@ namespace Kil0bitSystemMonitor
                     _shellHookRegistered = true;
             }
             catch { }
-            RefreshTaskbarBounds();
+            // UIA — только с ThreadPool (см. Schedule), не на UI при старте
+            ScheduleTaskbarBoundsRefresh();
         }
 
         private void UnregisterShellHook()
@@ -968,10 +989,18 @@ namespace Kil0bitSystemMonitor
                 iconRight = lastIcon.Value;
             else
             {
-                int startRight = TryGetStartButtonRight(taskbar, tb);
-                iconRight = startRight > tb.Left
-                    ? startRight
-                    : tb.Left + (int)(48 * _dpiScale);
+                // Пока UIA на ThreadPool не ответил — не затирать кэш стартом/48px
+                IntPtr taskListHint = FindBestTaskList(taskbar);
+                nint uiaKey = (nint)(taskListHint != IntPtr.Zero ? taskListHint : taskbar);
+                if (_uiaIconRightCache.TryGetValue(uiaKey, out int uiaCached) && uiaCached > tb.Left + 8)
+                    iconRight = uiaCached;
+                else
+                {
+                    int startRight = TryGetStartButtonRight(taskbar, tb);
+                    iconRight = startRight > tb.Left
+                        ? startRight
+                        : tb.Left + (int)(48 * _dpiScale);
+                }
             }
 
             nint key = (nint)taskbar;
@@ -1177,15 +1206,37 @@ namespace Kil0bitSystemMonitor
             if (best > tb.Left + 8)
                 return best;
 
-            best = Math.Max(best, TryGetLastIconRightViaUia(taskList, tb, trayLeft));
-            if (best <= tb.Left + 8)
-                best = Math.Max(best, TryGetLastIconRightViaUia(taskbar, tb, trayLeft));
+            // Win11: дочерние HWND часто пустые — UIA по ListItem/Button.
+            // На UI-потоке только кэш (дорого); полный обход — в ScheduleTaskbarBoundsRefresh.
+            IntPtr uiaRoot = taskList != IntPtr.Zero ? taskList : taskbar;
+            if (_dispatcher.CheckAccess())
+            {
+                if (_uiaIconRightCache.TryGetValue((nint)uiaRoot, out int cached) && cached > tb.Left + 8)
+                    return cached;
+                ScheduleTaskbarBoundsRefresh();
+                return null;
+            }
 
-            return best > tb.Left + 8 ? best : null;
+            int viaUia = TryGetLastIconRightViaUia(uiaRoot, tb, trayLeft);
+            if (viaUia <= tb.Left + 8 && uiaRoot != taskbar)
+                viaUia = TryGetLastIconRightViaUia(taskbar, tb, trayLeft);
+            if (viaUia > tb.Left + 8)
+            {
+                _uiaIconRightCache[(nint)uiaRoot] = viaUia;
+                return viaUia;
+            }
+
+            return null;
         }
 
-        private static int TryGetLastIconRightViaUia(IntPtr hwnd, Win32Helper.RECT tb, int trayLeft)
+        private int TryGetLastIconRightViaUia(IntPtr hwnd, Win32Helper.RECT tb, int trayLeft)
         {
+            if (hwnd == IntPtr.Zero) return 0;
+            if (Environment.TickCount64 < System.Threading.Interlocked.Read(ref _uiaCooldownUntilTick))
+                return 0;
+            if (System.Threading.Interlocked.CompareExchange(ref _uiaInFlight, 1, 0) != 0)
+                return 0;
+
             try
             {
                 var root = System.Windows.Automation.AutomationElement.FromHandle(hwnd);
@@ -1217,7 +1268,12 @@ namespace Kil0bitSystemMonitor
             }
             catch
             {
+                System.Threading.Interlocked.Exchange(ref _uiaCooldownUntilTick, Environment.TickCount64 + UiaFailCooldownMs);
                 return 0;
+            }
+            finally
+            {
+                System.Threading.Interlocked.Exchange(ref _uiaInFlight, 0);
             }
         }
 
@@ -1472,7 +1528,17 @@ namespace Kil0bitSystemMonitor
             _cachedDiskAccentBrush   = string.IsNullOrEmpty(_config.Config.DiskAccentColorHex)   ? null : new SolidBrush(HexToColor(_config.Config.DiskAccentColorHex));
         }
 
-        private float GetCachedMeasure(string t, Font f) { if (_offscreenGraphics == null) return 0; string k = $"{t}_{f.Name}_{f.Size}_{f.Style}"; if (!_measureCache.TryGetValue(k, out var w)) { w = _offscreenGraphics.MeasureString(t, f, PointF.Empty, StringFormat.GenericTypographic).Width; _measureCache[k] = w; } return w; }
+        private float GetCachedMeasure(string t, Font f)
+        {
+            if (_offscreenGraphics == null) return 0;
+            string k = $"{t}_{f.Name}_{f.Size}_{f.Style}";
+            if (_measureCache.TryGetValue(k, out var w)) return w;
+            if (_measureCache.Count >= MeasureCacheMax)
+                _measureCache.Clear();
+            w = _offscreenGraphics.MeasureString(t, f, PointF.Empty, StringFormat.GenericTypographic).Width;
+            _measureCache[k] = w;
+            return w;
+        }
         private void ClearCaches() { foreach (var f in _fontCache.Values) f.Dispose(); _fontCache.Clear(); _measureCache.Clear(); }
         private void SetBitmap(Bitmap bitmap)
         {

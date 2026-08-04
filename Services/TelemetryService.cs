@@ -11,7 +11,7 @@ namespace Kil0bitSystemMonitor.Services
 {
     public class TelemetryService : IDisposable
     {
-        private readonly PerformanceCounter _cpuCounter;
+        private PerformanceCounter? _cpuCounter;
         private class DiskCounterSet : IDisposable {
             public PerformanceCounter Usage { get; set; } = null!;
             public PerformanceCounter Read { get; set; } = null!;
@@ -147,14 +147,13 @@ namespace Kil0bitSystemMonitor.Services
         public TelemetryService(ConfigService config)
         {
             _config = config;
-            _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
-            
             _config.Config.PropertyChanged += Config_PropertyChanged;
             
-            // Perform heavy initialization in background to keep UI thread free
+            // Тяжёлый init (PerformanceCounter/GPU/диск) — вне UI-потока
             _ = System.Threading.Tasks.Task.Run(() => {
                 try 
                 {
+                    _cpuCounter = new PerformanceCounter("Processor", "% Processor Time", "_Total");
                     InitializeGpu();
                     InitializeDisk();
                     InitializeNetwork();
@@ -169,7 +168,6 @@ namespace Kil0bitSystemMonitor.Services
                     };
                     _timer.Start();
 
-                    // Perform first update immediately
                     UpdateMetrics();
                 }
                 catch { }
@@ -427,7 +425,7 @@ namespace Kil0bitSystemMonitor.Services
             var metrics = new SystemMetrics();
 
             // CPU
-            metrics.CpuUsage = _cpuCounter.NextValue();
+            metrics.CpuUsage = _cpuCounter?.NextValue() ?? 0;
 
             // RAM
             var memStatus = new MEMORYSTATUSEX();
@@ -955,7 +953,7 @@ namespace Kil0bitSystemMonitor.Services
                 _timer?.Stop();
                 _timer?.Dispose();
                 StopSmiReader();
-                _cpuCounter.Dispose();
+                _cpuCounter?.Dispose();
                 foreach (var set in _diskCounters.Values) set.Dispose();
                 foreach (var c in _gpuCounters.Values) c.Dispose();
                 _adlService?.Dispose();

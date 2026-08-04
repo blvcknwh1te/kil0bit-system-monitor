@@ -200,15 +200,16 @@ namespace Kil0bitSystemMonitor.Models
         public string? GpuAccentColorHex { get => _gpuAccentColorHex; set { _gpuAccentColorHex = value; OnPropertyChanged(); } }
         public string? DiskAccentColorHex { get => _diskAccentColorHex; set { _diskAccentColorHex = value; OnPropertyChanged(); } }
 
-        /// <summary>Доля 0–1: значения ≥ порога — warning (ниже critical).</summary>
+        /// <summary>Доля 0–1: значения ≥ порога — warning (строго ниже critical − gap).</summary>
         public double WarningThreshold
         {
             get => _warningThreshold;
             set
             {
-                double v = Math.Clamp(value, 0, 1);
-                if (v >= _criticalThreshold)
-                    v = Math.Max(0, _criticalThreshold - 0.01);
+                double gap = MetricAlertDefaults.ThresholdMinGap;
+                double min = MetricAlertDefaults.WarningPercentMin / 100.0;
+                double max = Math.Max(min, _criticalThreshold - gap);
+                double v = Math.Clamp(value, min, max);
                 if (Math.Abs(_warningThreshold - v) < 0.0001) return;
                 _warningThreshold = v;
                 OnPropertyChanged();
@@ -216,19 +217,35 @@ namespace Kil0bitSystemMonitor.Models
             }
         }
 
-        /// <summary>Доля 0–1: значения ≥ порога — critical.</summary>
+        /// <summary>Доля 0–1: значения ≥ порога — critical (10–95%).</summary>
         public double CriticalThreshold
         {
             get => _criticalThreshold;
             set
             {
-                double v = Math.Clamp(value, 0, 1);
-                if (v <= _warningThreshold)
-                    v = Math.Min(1, _warningThreshold + 0.01);
-                if (Math.Abs(_criticalThreshold - v) < 0.0001) return;
+                double gap = MetricAlertDefaults.ThresholdMinGap;
+                double min = MetricAlertDefaults.CriticalPercentMin / 100.0;
+                double max = MetricAlertDefaults.CriticalPercentMax / 100.0;
+                double v = Math.Clamp(value, min, max);
+
+                double warnMin = MetricAlertDefaults.WarningPercentMin / 100.0;
+                double warnMax = Math.Max(warnMin, v - gap);
+                if (_warningThreshold > warnMax)
+                {
+                    _warningThreshold = warnMax;
+                    OnPropertyChanged(nameof(WarningThreshold));
+                    OnPropertyChanged(nameof(WarningThresholdPercent));
+                }
+
+                if (Math.Abs(_criticalThreshold - v) < 0.0001)
+                {
+                    OnPropertyChanged(nameof(WarningThresholdPercentMax));
+                    return;
+                }
                 _criticalThreshold = v;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(CriticalThresholdPercent));
+                OnPropertyChanged(nameof(WarningThresholdPercentMax));
             }
         }
 
@@ -245,6 +262,22 @@ namespace Kil0bitSystemMonitor.Models
             get => Math.Round(CriticalThreshold * 100);
             set => CriticalThreshold = value / 100.0;
         }
+
+        /// <summary>Верхняя граница warning = current critical − 5% (шкала слайдера 0–100).</summary>
+        [System.Text.Json.Serialization.JsonIgnore]
+        public double WarningThresholdPercentMax =>
+            Math.Max(
+                MetricAlertDefaults.WarningPercentMin,
+                CriticalThresholdPercent - MetricAlertDefaults.ThresholdMinGapPercent);
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public double WarningThresholdPercentMin => MetricAlertDefaults.WarningPercentMin;
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public double CriticalThresholdPercentMin => MetricAlertDefaults.CriticalPercentMin;
+
+        [System.Text.Json.Serialization.JsonIgnore]
+        public double CriticalThresholdPercentMax => MetricAlertDefaults.CriticalPercentMax;
 
         public string WarningColorHex
         {

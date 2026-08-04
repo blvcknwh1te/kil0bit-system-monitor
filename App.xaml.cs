@@ -109,7 +109,10 @@ namespace Kil0bitSystemMonitor
             bool isStartup = System.Linq.Enumerable.Contains(args, "--startup");
             if (!isStartup)
             {
-                OpenSettings(viewModel, config);
+                // После первого layout/idle — не блокируем показ оверлея тяжёлым Settings XAML
+                Dispatcher.BeginInvoke(
+                    System.Windows.Threading.DispatcherPriority.ApplicationIdle,
+                    () => OpenSettings(viewModel, config));
             }
         }
 

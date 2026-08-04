@@ -361,6 +361,26 @@ namespace Kil0bitSystemMonitor
             _config.SaveConfig();
         }
 
+        /// <summary>Шкала 0–100; thumb не уезжает за warning max = critical − 5%.</summary>
+        private void WarningThresholdSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (sender is not Slider s || _config?.Config == null) return;
+            double min = MetricAlertDefaults.WarningPercentMin;
+            double max = _config.Config.WarningThresholdPercentMax;
+            double v = Math.Clamp(e.NewValue, min, max);
+            if (Math.Abs(s.Value - v) > 0.01)
+                s.Value = v;
+        }
+
+        /// <summary>Шкала 0–100; critical только в [10, 95].</summary>
+        private void CriticalThresholdSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (sender is not Slider s) return;
+            double v = Math.Clamp(e.NewValue, MetricAlertDefaults.CriticalPercentMin, MetricAlertDefaults.CriticalPercentMax);
+            if (Math.Abs(s.Value - v) > 0.01)
+                s.Value = v;
+        }
+
         private async void ResetApp_Click(object sender, RoutedEventArgs e)
         {
             ContentDialog resetDialog = new ContentDialog

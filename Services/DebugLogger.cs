@@ -61,7 +61,6 @@ namespace Kil0bitSystemMonitor.Services
                     if (_writer == null) return;
                     string line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{level}] [{category}] {message}";
                     _writer.WriteLine(line);
-                    _writer.Flush();
                 }
             }
             catch { }
@@ -105,7 +104,7 @@ namespace Kil0bitSystemMonitor.Services
             _currentCreatedUtc = DateTime.UtcNow;
             _writer = new StreamWriter(new FileStream(_currentPath, FileMode.Create, FileAccess.Write, FileShare.ReadWrite), Encoding.UTF8)
             {
-                AutoFlush = true
+                AutoFlush = false
             };
             Prune_NoLock();
         }
