@@ -76,6 +76,8 @@ namespace Kil0bitSystemMonitor.Helpers
 
         public const int GWL_EXSTYLE = -20;
         public const int GWL_STYLE = -16;
+        /// <summary>Для top-level окна задаёт owner (не parent). Owned всегда выше owner в Z-order.</summary>
+        public const int GWL_HWNDPARENT = -8;
 
         public const long WS_EX_TOOLWINDOW = 0x00000080L;
         public const long WS_EX_TOPMOST = 0x00000008L;
@@ -84,6 +86,7 @@ namespace Kil0bitSystemMonitor.Helpers
         public const long WS_EX_NOACTIVATE = 0x08000000L;
 
         public const int WS_POPUP = unchecked((int)0x80000000);
+        public const int WS_CHILD = 0x40000000;
 
         [DllImport("user32.dll")]
         public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
