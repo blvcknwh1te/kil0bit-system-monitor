@@ -203,6 +203,9 @@ namespace Kil0bitSystemMonitor.Helpers
         [DllImport("dwmapi.dll")]
         public static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS pMarInset);
 
+        public const int DWMWA_TRANSITIONS_FORCEDISABLED = 3;
+        /// <summary>Не cloack'ать окно во время Aero Peek (наведение на превью в таскбаре).</summary>
+        public const int DWMWA_EXCLUDED_FROM_PEEK = 12;
         public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
         public const int DWMWA_BORDER_COLOR = 34;
         public const int DWMWA_CAPTION_COLOR = 35;

@@ -161,9 +161,8 @@ namespace Kil0bitSystemMonitor
                 if (_currentDpi == 0) _currentDpi = 96;
                 _dpiScale = _currentDpi / 96.0f;
 
-                // Disable DWM animations to prevent flickering during Task View zoom transitions
-                int disableTransitions = 1;
-                OsCompat.SafeDwmSetWindowAttribute(_hWnd, 3, ref disableTransitions);
+                // Disable DWM animations + не прятать оверлей при Peek превью таскбара
+                ApplyDwmOverlayAttributes();
 
                 if (_config.Config.StickToTaskbar)
                     AttachToTaskbar();
@@ -196,7 +195,7 @@ namespace Kil0bitSystemMonitor
                     });
                 };
                 _telemetry.MetricsUpdated += _onMetricsUpdated;
-                // HideOnFullscreen / fade — Z-order при StickToTaskbar даёт child-вложение в панель
+                // HideOnFullscreen / fade. Z-order при StickToTaskbar — owner панели (не SetParent).
                 _visibilityTimer = new System.Threading.Timer(EnforceVisibility, null, VisibilityPollMs, VisibilityPollMs);
 
                 _onConfigPropertyChanged = (s, e) => {
@@ -238,9 +237,17 @@ namespace Kil0bitSystemMonitor
         }
 
         /// <summary>
-        /// StickToTaskbar: Z-order через child-вложение — TOPMOST не трогаем.
-        /// Иначе AlwaysOnTop → TOPMOST / сброс.
+        /// DWM: без анимаций перехода; не cloack'ать при Peek (наведение на thumbnail).
         /// </summary>
+        private void ApplyDwmOverlayAttributes()
+        {
+            if (_hWnd == IntPtr.Zero) return;
+            int disableTransitions = 1;
+            OsCompat.SafeDwmSetWindowAttribute(_hWnd, Win32Helper.DWMWA_TRANSITIONS_FORCEDISABLED, ref disableTransitions);
+            int excludeFromPeek = 1;
+            OsCompat.SafeDwmSetWindowAttribute(_hWnd, Win32Helper.DWMWA_EXCLUDED_FROM_PEEK, ref excludeFromPeek);
+        }
+
         private void ApplyTopMostStyle()
         {
             if (_hWnd == IntPtr.Zero || !IsWindow(_hWnd)) return;
@@ -319,7 +326,7 @@ namespace Kil0bitSystemMonitor
         }
 
         /// <summary>
-        /// Child таскбара: при пересоздании explorer Windows уничтожает children — пересоздаём HWND.
+        /// Owner = таскбар: при пересоздании explorer Windows уничтожает owned-окна — пересоздаём HWND.
         /// </summary>
         private bool EnsureOverlayHwndAlive()
         {
@@ -358,8 +365,7 @@ namespace Kil0bitSystemMonitor
                 if (_currentDpi == 0) _currentDpi = 96;
                 _dpiScale = _currentDpi / 96.0f;
 
-                int disableTransitions = 1;
-                OsCompat.SafeDwmSetWindowAttribute(_hWnd, 3, ref disableTransitions);
+                ApplyDwmOverlayAttributes();
 
                 if (_config.Config.StickToTaskbar)
                     AttachToTaskbar();
@@ -571,7 +577,8 @@ namespace Kil0bitSystemMonitor
         {
             if (!_config.Config.StickToTaskbar)
             {
-                MoveOverlayScreen((int)_config.Config.X, (int)_config.Config.Y);
+                SetWindowPos(_hWnd, IntPtr.Zero, (int)_config.Config.X, (int)_config.Config.Y, 0, 0,
+                    Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
                 return;
             }
 
@@ -596,7 +603,8 @@ namespace Kil0bitSystemMonitor
             int x = (int)_config.Config.X;
             if (TryGetTaskbarDragRange(taskbar, tb, overlayW, out int minX, out int maxX))
                 x = Math.Max(minX, Math.Min(maxX, x));
-            MoveOverlayScreen(x, cy);
+            SetWindowPos(_hWnd, IntPtr.Zero, x, cy, 0, 0,
+                Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
             _config.Config.X = x;
             _config.Config.Y = cy;
         }
@@ -672,7 +680,8 @@ namespace Kil0bitSystemMonitor
 
             int x = (int)Math.Round(_dragPosX);
             int y = (int)Math.Round(_dragPosY);
-            MoveOverlayScreen(x, y);
+            SetWindowPos(_hWnd, IntPtr.Zero, x, y, 0, 0,
+                Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
         }
 
         private void EndCustomDrag()
@@ -705,7 +714,8 @@ namespace Kil0bitSystemMonitor
 
             _dragPosX = x;
             _dragPosY = y;
-            MoveOverlayScreen(x, y);
+            SetWindowPos(_hWnd, IntPtr.Zero, x, y, 0, 0,
+                Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
             _config.Config.X = x;
             _config.Config.Y = y;
             _config.SaveConfig();
@@ -732,73 +742,46 @@ namespace Kil0bitSystemMonitor
         }
 
         /// <summary>
-        /// Встраивает оверлей как child Shell_TrayWnd: рисуется вместе с панелью,
-        /// превью окон (отдельный top-level) не выталкивают его под таскбар.
+        /// Owner таскбара (не child): выше панели в Z-order без SetParent в explorer
+        /// (SetParent давал долгий старт и ломал Aero Peek).
         /// </summary>
         private void EnsureAttachedToTaskbar(IntPtr taskbar)
         {
             if (taskbar == IntPtr.Zero || !IsWindow(taskbar) || _hWnd == IntPtr.Zero) return;
-            if (taskbar == _attachedTaskbar && Win32Helper.GetParent(_hWnd) == taskbar) return;
+            if (taskbar == _attachedTaskbar) return;
 
-            // Сбрасываем owner-связь, если осталась — дальше только SetParent.
-            Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, IntPtr.Zero);
+            // На случай остатка child от предыдущей схемы — вернуть top-level
+            if (Win32Helper.GetParent(_hWnd) != IntPtr.Zero)
+                DetachChildIfAny();
 
-            // Child + TOPMOST вместе дают странный Z-order у shell — снимаем TOPMOST на время вложения.
-            long ex = Win32Helper.GetWindowLong(_hWnd, Win32Helper.GWL_EXSTYLE);
-            if ((ex & Win32Helper.WS_EX_TOPMOST) != 0)
-            {
-                SetWindowPos(_hWnd, Win32Helper.HWND_NOTOPMOST, 0, 0, 0, 0,
-                    Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
-            }
-
-            Win32Helper.SetParent(_hWnd, taskbar);
+            Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, taskbar);
             _attachedTaskbar = taskbar;
-
-            // Поверх sibling-контролов панели (иконки/трей), без topmost-ленты рабочего стола
-            SetWindowPos(_hWnd, IntPtr.Zero, 0, 0, 0, 0,
-                Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+            ApplyDwmOverlayAttributes();
         }
 
         private void DetachFromTaskbar()
         {
-            if (_hWnd != IntPtr.Zero && IsWindow(_hWnd) && Win32Helper.GetParent(_hWnd) != IntPtr.Zero)
+            if (_hWnd != IntPtr.Zero && IsWindow(_hWnd))
             {
-                Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT screen);
-                Win32Helper.SetParent(_hWnd, IntPtr.Zero);
-
-                int style = Win32Helper.GetWindowLong(_hWnd, Win32Helper.GWL_STYLE);
-                style = (style & ~Win32Helper.WS_CHILD) | Win32Helper.WS_POPUP;
-                Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_STYLE, (IntPtr)style);
-
-                SetWindowPos(_hWnd, IntPtr.Zero, screen.Left, screen.Top, 0, 0,
-                    Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0020); // SWP_FRAMECHANGED
+                DetachChildIfAny();
+                Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, IntPtr.Zero);
                 ApplyTopMostStyle();
             }
             _attachedTaskbar = IntPtr.Zero;
         }
 
-        /// <summary>Экранные координаты → SetWindowPos (client, если вложены в таскбар).</summary>
-        private void MoveOverlayScreen(int screenX, int screenY)
+        private void DetachChildIfAny()
         {
-            if (_hWnd == IntPtr.Zero) return;
+            if (_hWnd == IntPtr.Zero || Win32Helper.GetParent(_hWnd) == IntPtr.Zero) return;
 
-            if (_attachedTaskbar != IntPtr.Zero && IsWindow(_attachedTaskbar) &&
-                Win32Helper.GetParent(_hWnd) == _attachedTaskbar)
-            {
-                var pt = new POINT { x = screenX, y = screenY };
-                ScreenToClient(_attachedTaskbar, ref pt);
-                SetWindowPos(_hWnd, IntPtr.Zero, pt.x, pt.y, 0, 0,
-                    Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
-                return;
-            }
-
-            SetWindowPos(_hWnd, IntPtr.Zero, screenX, screenY, 0, 0,
-                Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+            Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT screen);
+            Win32Helper.SetParent(_hWnd, IntPtr.Zero);
+            int style = Win32Helper.GetWindowLong(_hWnd, Win32Helper.GWL_STYLE);
+            style = (style & ~Win32Helper.WS_CHILD) | Win32Helper.WS_POPUP;
+            Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_STYLE, (IntPtr)style);
+            SetWindowPos(_hWnd, IntPtr.Zero, screen.Left, screen.Top, 0, 0,
+                Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0020);
         }
-
-        private bool IsEmbeddedInTaskbar =>
-            _attachedTaskbar != IntPtr.Zero && _hWnd != IntPtr.Zero &&
-            Win32Helper.GetParent(_hWnd) == _attachedTaskbar;
 
         /// <summary>
         /// Таскбар монитора под точкой (primary Shell_TrayWnd или Shell_SecondaryTrayWnd).
@@ -1478,22 +1461,13 @@ namespace Kil0bitSystemMonitor
                 hBitmap = bitmap.GetHbitmap(Color.FromArgb(0)); oldBitmap = SelectObject(memDC, hBitmap);
                 SIZE size = new SIZE { cx = bitmap.Width, cy = bitmap.Height };
                 POINT ps = new POINT { x = 0, y = 0 };
-                BLENDFUNCTION b = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = _currentAlpha, AlphaFormat = 1 };
-
-                // Child: pptDst игнорируется (позиция только SetWindowPos). Top-level: экранные координаты.
-                if (IsEmbeddedInTaskbar)
-                {
-                    UpdateLayeredWindowChild(_hWnd, windowDC, IntPtr.Zero, ref size, memDC, ref ps, 0, ref b, 2);
-                }
+                POINT tp;
+                if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT wr))
+                    tp = new POINT { x = wr.Left, y = wr.Top };
                 else
-                {
-                    POINT tp;
-                    if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT wr))
-                        tp = new POINT { x = wr.Left, y = wr.Top };
-                    else
-                        tp = new POINT { x = (int)_config.Config.X, y = (int)_config.Config.Y };
-                    UpdateLayeredWindow(_hWnd, windowDC, ref tp, ref size, memDC, ref ps, 0, ref b, 2);
-                }
+                    tp = new POINT { x = (int)_config.Config.X, y = (int)_config.Config.Y };
+                BLENDFUNCTION b = new BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = _currentAlpha, AlphaFormat = 1 };
+                UpdateLayeredWindow(_hWnd, windowDC, ref tp, ref size, memDC, ref ps, 0, ref b, 2);
             }
             finally { if (hBitmap != IntPtr.Zero) { SelectObject(memDC, oldBitmap); DeleteObject(hBitmap); } DeleteDC(memDC); ReleaseDC(_hWnd, windowDC); }
         }
@@ -1548,73 +1522,35 @@ namespace Kil0bitSystemMonitor
                 // уезжает на монитор под мышью на каждом UpdateLayeredWindow (тики метрик).
                 if ((pos.flags & 0x0002) == 0)
                 {
-                    int screenX;
-                    int screenY;
+                    int refX;
+                    int refY;
                     if (_lButtonDragged && Win32Helper.GetCursorPos(out Win32Helper.POINT cursor))
                     {
-                        screenX = cursor.X;
-                        screenY = cursor.Y;
+                        refX = cursor.X;
+                        refY = cursor.Y;
                     }
                     else if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT cur) && cur.Width > 0)
                     {
-                        screenX = cur.Left + cur.Width / 2;
-                        screenY = cur.Top + cur.Height / 2;
-                    }
-                    else if (IsEmbeddedInTaskbar)
-                    {
-                        var client = new POINT { x = pos.x, y = pos.y };
-                        ClientToScreen(_attachedTaskbar, ref client);
-                        int w = pos.cx > 0 ? pos.cx : 1;
-                        screenX = client.x + w / 2;
-                        screenY = client.y;
+                        refX = cur.Left + cur.Width / 2;
+                        refY = cur.Top + cur.Height / 2;
                     }
                     else
                     {
                         int w = pos.cx > 0 ? pos.cx : 1;
-                        screenX = pos.x + w / 2;
-                        screenY = pos.y;
+                        refX = pos.x + w / 2;
+                        refY = pos.y;
                     }
 
-                    IntPtr taskbar = ResolveTaskbarForPoint(screenX, screenY);
+                    IntPtr taskbar = ResolveTaskbarForPoint(refX, refY);
                     if (taskbar != IntPtr.Zero && Win32Helper.GetWindowRect(taskbar, out Win32Helper.RECT tb))
                     {
                         EnsureAttachedToTaskbar(taskbar);
                         int oh = (int)((_config.Config.ShowPods ? 36 : 32) * _dpiScale * (float)_config.Config.ScaleFactor);
-                        int outY = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
+                        pos.y = tb.Top + (tb.Bottom - tb.Top - oh) / 2;
 
                         int overlayW = pos.cx > 0 ? pos.cx : (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT wr) ? wr.Width : 200);
-                        int outX;
-                        if (IsEmbeddedInTaskbar)
-                        {
-                            // pos в client — для clamp берём screen-left
-                            outX = Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT live) ? live.Left : (int)_config.Config.X;
-                            if (_lButtonDragged)
-                            {
-                                var dragClient = new POINT { x = pos.x, y = pos.y };
-                                ClientToScreen(taskbar, ref dragClient);
-                                outX = dragClient.x;
-                            }
-                        }
-                        else
-                        {
-                            outX = pos.x;
-                        }
-
                         if (TryGetTaskbarDragRange(taskbar, tb, overlayW, out int minX, out int maxX))
-                            outX = Math.Max(minX, Math.Min(maxX, outX));
-
-                        if (IsEmbeddedInTaskbar)
-                        {
-                            var pt = new POINT { x = outX, y = outY };
-                            ScreenToClient(taskbar, ref pt);
-                            pos.x = pt.x;
-                            pos.y = pt.y;
-                        }
-                        else
-                        {
-                            pos.x = outX;
-                            pos.y = outY;
-                        }
+                            pos.x = Math.Max(minX, Math.Min(maxX, pos.x));
 
                         Marshal.StructureToPtr(pos, lParam, false);
                     }
@@ -1885,8 +1821,6 @@ namespace Kil0bitSystemMonitor
         [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string? n);
         [DllImport("user32.dll")] static extern IntPtr LoadCursor(IntPtr i, int n);
         [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)] static extern bool UpdateLayeredWindow(IntPtr h, IntPtr hd, ref POINT pd, ref SIZE ps, IntPtr hs, ref POINT pr, int c, ref BLENDFUNCTION b, int f);
-        [DllImport("user32.dll", EntryPoint = "UpdateLayeredWindow", ExactSpelling = true, SetLastError = true)]
-        static extern bool UpdateLayeredWindowChild(IntPtr h, IntPtr hd, IntPtr pd, ref SIZE ps, IntPtr hs, ref POINT pr, int c, ref BLENDFUNCTION b, int f);
         [DllImport("user32.dll")] static extern IntPtr GetWindowDC(IntPtr h);
         [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr hd);
         [DllImport("gdi32.dll")] static extern IntPtr CreateCompatibleDC(IntPtr h);
@@ -1902,7 +1836,6 @@ namespace Kil0bitSystemMonitor
         private const uint TB_BUTTONCOUNT = 0x0418;
         private const uint TB_GETITEMRECT = 0x041D;
         [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-        [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
         private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr childAfter, string? className, string? windowName);
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
