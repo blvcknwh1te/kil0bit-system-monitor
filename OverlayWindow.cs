@@ -326,7 +326,7 @@ namespace Kil0bitSystemMonitor
         }
 
         /// <summary>
-        /// Owner = таскбар: при пересоздании explorer Windows уничтожает owned-окна — пересоздаём HWND.
+        /// Owner = таскбар: shell иногда уничтожает owned при превью — пересоздаём сразу, без кадра «пусто».
         /// </summary>
         private bool EnsureOverlayHwndAlive()
         {
@@ -341,7 +341,6 @@ namespace Kil0bitSystemMonitor
                 _hWnd = IntPtr.Zero;
                 _attachedTaskbar = IntPtr.Zero;
                 _shellHookRegistered = false;
-                _overlayVisible = false;
 
                 int x = (int)_config.Config.X;
                 int y = (int)_config.Config.Y;
@@ -373,14 +372,23 @@ namespace Kil0bitSystemMonitor
                     AlignToTaskbarCenter();
 
                 RegisterShellHook();
-                _currentAlpha = 0;
-                _targetAlpha = _config.Config.ShowOverlay ? (byte)255 : (byte)0;
-                if (_targetAlpha == 255)
+
+                // Сразу полный кадр — без fade 0→255 (иначе микромигание при превью)
+                if (_config.Config.ShowOverlay)
                 {
+                    _currentAlpha = 255;
+                    _targetAlpha = 255;
                     ShowWindow(_hWnd, 5);
                     _overlayVisible = true;
-                    _currentAlpha = 255;
                     UpdateLayer();
+                    if (_attachedTaskbar != IntPtr.Zero)
+                        KeepAboveTaskbarStack(_attachedTaskbar);
+                }
+                else
+                {
+                    _currentAlpha = 0;
+                    _targetAlpha = 0;
+                    _overlayVisible = false;
                 }
 
                 DebugLogger.Info("Overlay", $"HWND recreated 0x{_hWnd.ToInt64():X}");
@@ -820,8 +828,10 @@ namespace Kil0bitSystemMonitor
             IntPtr above = GetWindow(target, GW_HWNDPREV);
             if (above == _hWnd) return;
 
+            // Без redraw/WINDOWPOSCHANGING — иначе микромигание при подъёме над превью
             SetWindowPos(_hWnd, above != IntPtr.Zero ? above : IntPtr.Zero, 0, 0, 0, 0,
-                Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+                Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE
+                | Win32Helper.SWP_NOREDRAW | Win32Helper.SWP_NOSENDCHANGING);
         }
 
         private void RequestTaskbarStackReassert()
@@ -1633,8 +1643,8 @@ namespace Kil0bitSystemMonitor
                     _hWnd = IntPtr.Zero;
                     _attachedTaskbar = IntPtr.Zero;
                     _shellHookRegistered = false;
-                    _overlayVisible = false;
-                    _dispatcher.BeginInvoke(() => EnsureOverlayHwndAlive());
+                    // Сразу в том же потоке — без BeginInvoke-кадра без оверлея
+                    EnsureOverlayHwndAlive();
                 }
                 return IntPtr.Zero;
             }
