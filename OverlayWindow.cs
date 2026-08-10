@@ -563,13 +563,25 @@ namespace Kil0bitSystemMonitor
         private readonly System.Collections.Concurrent.ConcurrentDictionary<nint, int> _uiaIconRightCache = new();
         private bool _shellHookRegistered;
         private uint _wmShellHook;
+        private IntPtr _winEventHook;
+        private WinEventProc? _winEventProc;
+        private int _stackReassertPending;
         private const int UiaFailCooldownMs = 120_000;
+
+        private delegate void WinEventProc(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
 
         private const int HSHELL_WINDOWCREATED = 1;
         private const int HSHELL_WINDOWDESTROYED = 2;
+        private const int HSHELL_WINDOWACTIVATED = 4;
         private const int HSHELL_WINDOWREPLACED = 13;
         private const int HSHELL_WINDOWREPLACING = 14;
         private const int VisibilityPollMs = 1000;
+        private const uint GW_HWNDPREV = 3;
+        private const uint EVENT_OBJECT_SHOW = 0x8002;
+        private const uint EVENT_OBJECT_HIDE = 0x8003;
+        private const uint OBJID_WINDOW = 0;
+        private const uint WINEVENT_OUTOFCONTEXT = 0;
+        private const uint WINEVENT_SKIPOWNPROCESS = 2;
         private const uint MONITOR_DEFAULTTONULL = 0;
         private const uint MONITOR_DEFAULTTONEAREST = 2;
 
@@ -757,6 +769,7 @@ namespace Kil0bitSystemMonitor
             Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_HWNDPARENT, taskbar);
             _attachedTaskbar = taskbar;
             ApplyDwmOverlayAttributes();
+            KeepAboveTaskbarStack(taskbar);
         }
 
         private void DetachFromTaskbar()
@@ -781,6 +794,77 @@ namespace Kil0bitSystemMonitor
             Win32Helper.SetWindowLongPtr(_hWnd, Win32Helper.GWL_STYLE, (IntPtr)style);
             SetWindowPos(_hWnd, IntPtr.Zero, screen.Left, screen.Top, 0, 0,
                 Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE | 0x0020);
+        }
+
+        /// <summary>
+        /// Ставит оверлей над таскбаром и над thumbnail-хостом (если он есть).
+        /// Иначе широкий прозрачный хост превью перекрывает оверлей справа.
+        /// </summary>
+        private void KeepAboveTaskbarStack(IntPtr taskbar)
+        {
+            if (taskbar == IntPtr.Zero || !IsWindow(taskbar) || _hWnd == IntPtr.Zero) return;
+
+            IntPtr target = taskbar;
+            IntPtr walk = GetWindow(taskbar, GW_HWNDPREV);
+            for (int i = 0; i < 16 && walk != IntPtr.Zero && walk != _hWnd; i++)
+            {
+                if (IsTaskbarFlyoutWindow(walk))
+                {
+                    target = walk;
+                    walk = GetWindow(walk, GW_HWNDPREV);
+                    continue;
+                }
+                break;
+            }
+
+            IntPtr above = GetWindow(target, GW_HWNDPREV);
+            if (above == _hWnd) return;
+
+            SetWindowPos(_hWnd, above != IntPtr.Zero ? above : IntPtr.Zero, 0, 0, 0, 0,
+                Win32Helper.SWP_NOMOVE | Win32Helper.SWP_NOSIZE | Win32Helper.SWP_NOACTIVATE);
+        }
+
+        private void RequestTaskbarStackReassert()
+        {
+            if (_disposing || !_overlayVisible || !_config.Config.StickToTaskbar) return;
+            if (System.Threading.Interlocked.CompareExchange(ref _stackReassertPending, 1, 0) != 0)
+                return;
+
+            void Run()
+            {
+                System.Threading.Interlocked.Exchange(ref _stackReassertPending, 0);
+                if (_disposing || !_overlayVisible || !_config.Config.StickToTaskbar) return;
+                if (!EnsureOverlayHwndAlive()) return;
+
+                IntPtr taskbar = _attachedTaskbar;
+                if (taskbar == IntPtr.Zero || !IsWindow(taskbar))
+                {
+                    if (Win32Helper.GetWindowRect(_hWnd, out Win32Helper.RECT r))
+                        taskbar = ResolveTaskbarForPoint(r.Left + r.Width / 2, r.Top + r.Height / 2);
+                }
+                if (taskbar != IntPtr.Zero)
+                    KeepAboveTaskbarStack(taskbar);
+            }
+
+            if (_dispatcher.CheckAccess())
+                Run();
+            else
+                _dispatcher.BeginInvoke(Run, System.Windows.Threading.DispatcherPriority.Send);
+        }
+
+        private static bool IsTaskbarFlyoutWindow(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero) return false;
+            var sb = new StringBuilder(64);
+            Win32Helper.GetClassName(hwnd, sb, sb.Capacity);
+            string cls = sb.ToString();
+            return cls is "TaskListThumbnailWnd"
+                or "XamlExplorerHostIslandWindow"
+                or "XamlExplorerViewHostWindow"
+                or "Windows.UI.Core.CoreWindow"
+                or "DesktopWindowXamlSource"
+                or "PopupHost"
+                or "Windows.UI.Input.InputSite.WindowClass";
         }
 
         /// <summary>
@@ -848,15 +932,48 @@ namespace Kil0bitSystemMonitor
                     _shellHookRegistered = true;
             }
             catch { }
-            // UIA — только с ThreadPool (см. Schedule), не на UI при старте
+
+            try
+            {
+                _winEventProc ??= OnWinEvent;
+                if (_winEventHook == IntPtr.Zero)
+                {
+                    _winEventHook = SetWinEventHook(
+                        EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE,
+                        IntPtr.Zero, _winEventProc, 0, 0,
+                        WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS);
+                }
+            }
+            catch { }
+
             ScheduleTaskbarBoundsRefresh();
         }
 
         private void UnregisterShellHook()
         {
-            if (!_shellHookRegistered || _hWnd == IntPtr.Zero) return;
-            try { DeregisterShellHookWindow(_hWnd); } catch { }
-            _shellHookRegistered = false;
+            if (_shellHookRegistered && _hWnd != IntPtr.Zero)
+            {
+                try { DeregisterShellHookWindow(_hWnd); } catch { }
+                _shellHookRegistered = false;
+            }
+
+            if (_winEventHook != IntPtr.Zero)
+            {
+                try { UnhookWinEvent(_winEventHook); } catch { }
+                _winEventHook = IntPtr.Zero;
+            }
+        }
+
+        private void OnWinEvent(IntPtr hWinEventHook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime)
+        {
+            if (idObject != unchecked((int)OBJID_WINDOW) || hwnd == IntPtr.Zero || hwnd == _hWnd)
+                return;
+            if (!_config.Config.StickToTaskbar || !_overlayVisible)
+                return;
+            if (!IsTaskbarFlyoutWindow(hwnd) && ResolveTaskbarRoot(hwnd) == IntPtr.Zero)
+                return;
+
+            RequestTaskbarStackReassert();
         }
 
         private void OnShellHook(IntPtr wParam)
@@ -865,7 +982,15 @@ namespace Kil0bitSystemMonitor
             // Без HSHELL_REDRAW: иначе Refresh+UIA на каждый redraw любого окна.
             if (code is HSHELL_WINDOWCREATED or HSHELL_WINDOWDESTROYED
                 or HSHELL_WINDOWREPLACED or HSHELL_WINDOWREPLACING)
+            {
                 ScheduleTaskbarBoundsRefresh();
+                // Появление превью окон — сразу над thumbnail-хостом.
+                if (code is HSHELL_WINDOWCREATED or HSHELL_WINDOWREPLACED)
+                    RequestTaskbarStackReassert();
+            }
+
+            if (code == HSHELL_WINDOWACTIVATED)
+                RequestTaskbarStackReassert();
         }
 
         private void ScheduleTaskbarBoundsRefresh()
@@ -1813,11 +1938,14 @@ namespace Kil0bitSystemMonitor
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern uint RegisterWindowMessage(string lpString);
         [DllImport("user32.dll")] static extern bool RegisterShellHookWindow(IntPtr hWnd);
         [DllImport("user32.dll")] static extern bool DeregisterShellHookWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc, WinEventProc lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+        [DllImport("user32.dll")] static extern bool UnhookWinEvent(IntPtr hWinEventHook);
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern ushort RegisterClassEx(ref WNDCLASSEX wc);
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern IntPtr CreateWindowEx(int ex, string cl, string nm, uint st, int x, int y, int w, int h, IntPtr p, IntPtr m, IntPtr i, IntPtr lp);
         [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr ha, int x, int y, int cx, int cy, uint f);
         [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
         [DllImport("user32.dll")] static extern IntPtr DefWindowProc(IntPtr h, uint m, IntPtr w, IntPtr l);
+        [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint c);
         [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string? n);
         [DllImport("user32.dll")] static extern IntPtr LoadCursor(IntPtr i, int n);
         [DllImport("user32.dll", ExactSpelling = true, SetLastError = true)] static extern bool UpdateLayeredWindow(IntPtr h, IntPtr hd, ref POINT pd, ref SIZE ps, IntPtr hs, ref POINT pr, int c, ref BLENDFUNCTION b, int f);
